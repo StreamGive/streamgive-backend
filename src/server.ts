@@ -2,6 +2,7 @@ import Fastify from 'fastify';
 
 import { prisma } from './db.js';
 import { ngoRoutes } from './routes/ngos.js';
+import { streamRoutes } from './routes/streams.js';
 
 export function buildServer() {
   const app = Fastify({ logger: true });
@@ -12,6 +13,7 @@ export function buildServer() {
   });
 
   app.register(ngoRoutes);
+  app.register(streamRoutes);
 
   return app;
 }
