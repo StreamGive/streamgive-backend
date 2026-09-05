@@ -57,6 +57,36 @@ model Stream {
   @@map("streams")
 }
 
+enum NgoApplicationStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+/// Off-chain intake for prospective NGOs, reviewed by admins (next commit)
+/// before anyone goes and calls the on-chain `approve_ngo`. Deliberately
+/// separate from `Ngo.verified`: this tracks the review workflow, while
+/// `Ngo.verified` stays sourced only from the contract's `approved` event
+/// (handled by the indexer) so there's exactly one source of truth for
+/// on-chain state.
+model NgoApplication {
+  id           String               @id @default(uuid())
+  ownerAddress String               @map("owner_address")
+  name         String
+  description  String
+  website      String?
+  contactEmail String               @map("contact_email")
+  country      String?
+  status       NgoApplicationStatus @default(PENDING)
+  reviewNote   String?              @map("review_note")
+  createdAt    DateTime             @default(now()) @map("created_at")
+  updatedAt    DateTime             @updatedAt @map("updated_at")
+
+  @@index([ownerAddress])
+  @@index([status])
+  @@map("ngo_applications")
+}
+
 /// Single-row-per-id table tracking how far the event indexer has gotten,
 /// so a restart resumes instead of re-scanning from "now" every time.
 model IndexerCheckpoint {
