@@ -1,4 +1,5 @@
 import { DONATION_VAULT_CONTRACT_ID, NGO_REGISTRY_CONTRACT_ID } from './contracts.js';
+import { handleDonationVaultEvent } from './handlers/donationVault.js';
 import { handleNgoRegistryEvent } from './handlers/ngoRegistry.js';
 import type { ContractEvent, EventHandler } from './worker.js';
 
@@ -8,7 +9,7 @@ export const dispatchEvent: EventHandler = async (event: ContractEvent) => {
       await handleNgoRegistryEvent(event);
       break;
     case DONATION_VAULT_CONTRACT_ID:
-      // Handled in an upcoming commit.
+      await handleDonationVaultEvent(event);
       break;
     default:
       break;
