@@ -20,6 +20,7 @@
     "db:studio": "prisma studio"
   },
   "dependencies": {
+    "@fastify/rate-limit": "^11.2.0",
     "@prisma/adapter-pg": "^7.10.0",
     "@prisma/client": "^7.10.0",
     "@stellar/stellar-sdk": "^17.0.1",

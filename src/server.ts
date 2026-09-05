@@ -1,3 +1,4 @@
+import rateLimit from '@fastify/rate-limit';
 import Fastify from 'fastify';
 
 import { prisma } from './db.js';
@@ -8,6 +9,11 @@ import { streamRoutes } from './routes/streams.js';
 
 export function buildServer() {
   const app = Fastify({ logger: true });
+
+  app.register(rateLimit, {
+    max: 100,
+    timeWindow: '1 minute',
+  });
 
   app.get('/health', async () => {
     await prisma.$queryRaw`SELECT 1`;

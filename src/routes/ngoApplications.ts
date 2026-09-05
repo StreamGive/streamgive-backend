@@ -22,22 +22,30 @@ const reviewBodySchema = z.object({
 });
 
 export async function ngoApplicationRoutes(app: FastifyInstance): Promise<void> {
-  app.post('/ngo-applications', async (request, reply) => {
-    const parsed = applicationSchema.safeParse(request.body);
-    if (!parsed.success) {
-      return reply.code(400).send({ error: 'invalid_request', details: parsed.error.flatten() });
-    }
+  app.post(
+    '/ngo-applications',
+    // Public write endpoint — tighter than the global default since it's
+    // the most spam-prone route in the API.
+    { config: { rateLimit: { max: 5, timeWindow: '1 minute' } } },
+    async (request, reply) => {
+      const parsed = applicationSchema.safeParse(request.body);
+      if (!parsed.success) {
+        return reply
+          .code(400)
+          .send({ error: 'invalid_request', details: parsed.error.flatten() });
+      }
 
-    const existingPending = await prisma.ngoApplication.findFirst({
-      where: { ownerAddress: parsed.data.ownerAddress, status: 'PENDING' },
-    });
-    if (existingPending) {
-      return reply.code(409).send({ error: 'application_already_pending' });
-    }
+      const existingPending = await prisma.ngoApplication.findFirst({
+        where: { ownerAddress: parsed.data.ownerAddress, status: 'PENDING' },
+      });
+      if (existingPending) {
+        return reply.code(409).send({ error: 'application_already_pending' });
+      }
 
-    const application = await prisma.ngoApplication.create({ data: parsed.data });
-    return reply.code(201).send(application);
-  });
+      const application = await prisma.ngoApplication.create({ data: parsed.data });
+      return reply.code(201).send(application);
+    },
+  );
 
   app.get('/ngo-applications', { preHandler: requireAdminSignature }, async (request, reply) => {
     const parsed = listQuerySchema.safeParse(request.query);

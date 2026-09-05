@@ -1,6 +1,9 @@
 import type { FastifyInstance } from 'fastify';
+import { z } from 'zod';
 
 import { prisma } from '../db.js';
+
+const paramsSchema = z.object({ ngoId: z.string().uuid() });
 
 /**
  * Public "impact" view for one NGO — a superset of /ngos/:id's profile
@@ -12,7 +15,11 @@ import { prisma } from '../db.js';
  */
 export async function impactRoutes(app: FastifyInstance): Promise<void> {
   app.get('/impact/:ngoId', async (request, reply) => {
-    const { ngoId } = request.params as { ngoId: string };
+    const parsedParams = paramsSchema.safeParse(request.params);
+    if (!parsedParams.success) {
+      return reply.code(400).send({ error: 'invalid_request' });
+    }
+    const { ngoId } = parsedParams.data;
 
     const ngo = await prisma.ngo.findUnique({
       where: { id: ngoId },

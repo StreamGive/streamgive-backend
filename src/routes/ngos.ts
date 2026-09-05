@@ -1,6 +1,9 @@
 import type { FastifyInstance } from 'fastify';
+import { z } from 'zod';
 
 import { prisma } from '../db.js';
+
+const idParamSchema = z.object({ id: z.string().uuid() });
 
 export async function ngoRoutes(app: FastifyInstance): Promise<void> {
   app.get('/ngos', async () => {
@@ -12,7 +15,11 @@ export async function ngoRoutes(app: FastifyInstance): Promise<void> {
   });
 
   app.get('/ngos/:id', async (request, reply) => {
-    const { id } = request.params as { id: string };
+    const parsedParams = idParamSchema.safeParse(request.params);
+    if (!parsedParams.success) {
+      return reply.code(400).send({ error: 'invalid_request' });
+    }
+    const { id } = parsedParams.data;
 
     const ngo = await prisma.ngo.findUnique({
       where: { id },
