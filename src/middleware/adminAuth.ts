@@ -1,7 +1,6 @@
 import { Keypair } from '@stellar/stellar-sdk';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 
-const ADMIN_ADDRESS = process.env.ADMIN_ADDRESS;
 const MAX_CLOCK_SKEW_MS = 5 * 60 * 1000;
 
 /**
@@ -16,6 +15,11 @@ export async function requireAdminSignature(
   request: FastifyRequest,
   reply: FastifyReply,
 ): Promise<void> {
+  // Read per-request, not cached at module load: env vars set after this
+  // module is first imported (as tests do, in beforeAll) would otherwise
+  // never be seen, since a module-level const only evaluates once.
+  const ADMIN_ADDRESS = process.env.ADMIN_ADDRESS;
+
   if (!ADMIN_ADDRESS) {
     reply.code(503).send({ error: 'admin_auth_not_configured' });
     return;
