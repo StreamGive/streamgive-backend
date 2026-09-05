@@ -57,11 +57,70 @@ async function handleStreamCreated(event: ContractEvent): Promise<void> {
   });
 }
 
+/** Withdraw's event payload is just the accrued amount, so the new balance
+ * and withdrawn total are fully determined by it — no ambiguity. */
+async function handleWithdraw(event: ContractEvent): Promise<void> {
+  const [, streamIdVal] = event.topic;
+  const onChainId = scValToNative(streamIdVal) as bigint;
+  const accrued = scValToNative(event.value) as bigint;
+
+  const stream = await prisma.stream.findUnique({ where: { onChainId } });
+  if (!stream) return;
+
+  await prisma.stream.update({
+    where: { onChainId },
+    data: {
+      balance: (BigInt(stream.balance) - accrued).toString(),
+      withdrawn: (BigInt(stream.withdrawn) + accrued).toString(),
+    },
+  });
+}
+
+/** Cancel's payload carries both the settled amount and the refund, so —
+ * like withdraw — the resulting state is fully determined by the event. */
+async function handleCancel(event: ContractEvent): Promise<void> {
+  const [, streamIdVal] = event.topic;
+  const onChainId = scValToNative(streamIdVal) as bigint;
+  const [accrued] = scValToNative(event.value) as [bigint, bigint];
+
+  const stream = await prisma.stream.findUnique({ where: { onChainId } });
+  if (!stream) return;
+
+  await prisma.stream.update({
+    where: { onChainId },
+    data: {
+      withdrawn: (BigInt(stream.withdrawn) + accrued).toString(),
+      balance: '0',
+      rate: '0',
+      status: 'CANCELLED',
+    },
+  });
+}
+
 export async function handleDonationVaultEvent(event: ContractEvent): Promise<void> {
   const [topicSymbol] = event.topic;
   const topic = scValToNative(topicSymbol) as string;
 
-  if (topic === 'created') {
-    await handleStreamCreated(event);
+  switch (topic) {
+    case 'created':
+      await handleStreamCreated(event);
+      break;
+    case 'withdraw':
+      await handleWithdraw(event);
+      break;
+    case 'cancel':
+      await handleCancel(event);
+      break;
+    case 'topup':
+    case 'ratemod':
+      // Deliberately unhandled for now: both events only publish the new
+      // amount/rate, not how much accrued and settled to the NGO during
+      // the same call, so the new balance can't be reconstructed from the
+      // event payload alone without either a verified read-only contract
+      // call (get_stream) or duplicating the contract's accrual math here
+      // — both real work, tracked as follow-up rather than guessed at.
+      break;
+    default:
+      break;
   }
 }
