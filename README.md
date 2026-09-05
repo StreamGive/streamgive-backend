@@ -20,7 +20,7 @@ npm run db:push                 # sync the schema onto streamgive
 npm run dev
 ```
 
-To run the whole stack containerized instead: `docker compose up --build`.
+To run the whole stack containerized instead, after `npm run db:push` above: `docker compose up --build`.
 
 To run the integration test suite, additionally:
 
