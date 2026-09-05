@@ -1,0 +1,58 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Donor {
+  id        String   @id @default(uuid())
+  address   String   @unique
+  createdAt DateTime @default(now()) @map("created_at")
+  streams   Stream[]
+
+  @@map("donors")
+}
+
+model Ngo {
+  id           String   @id @default(uuid())
+  ownerAddress String   @unique @map("owner_address")
+  name         String
+  verified     Boolean  @default(false)
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+  streams      Stream[]
+
+  @@map("ngos")
+}
+
+enum StreamStatus {
+  ACTIVE
+  CANCELLED
+}
+
+model Stream {
+  id           String       @id @default(uuid())
+  /// Stream id as assigned by the donation-vault contract.
+  onChainId    BigInt       @unique @map("on_chain_id")
+  donorId      String       @map("donor_id")
+  donor        Donor        @relation(fields: [donorId], references: [id])
+  ngoId        String       @map("ngo_id")
+  ngo          Ngo          @relation(fields: [ngoId], references: [id])
+  tokenAddress String       @map("token_address")
+  /// i128 values from the contract, stored as decimal strings to avoid
+  /// precision loss — Postgres bigint/numeric mapping is handled at the
+  /// application layer, not by Prisma's native int types.
+  rate         String
+  balance      String
+  withdrawn    String
+  status       StreamStatus @default(ACTIVE)
+  createdAt    DateTime     @default(now()) @map("created_at")
+  updatedAt    DateTime     @updatedAt @map("updated_at")
+
+  @@index([donorId])
+  @@index([ngoId])
+  @@map("streams")
+}
