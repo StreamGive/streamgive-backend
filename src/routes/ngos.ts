@@ -10,4 +10,43 @@ export async function ngoRoutes(app: FastifyInstance): Promise<void> {
       take: 100,
     });
   });
+
+  app.get('/ngos/:id', async (request, reply) => {
+    const { id } = request.params as { id: string };
+
+    const ngo = await prisma.ngo.findUnique({
+      where: { id },
+      include: {
+        streams: {
+          select: { donorId: true, status: true, balance: true, withdrawn: true },
+        },
+      },
+    });
+
+    if (!ngo) {
+      return reply.code(404).send({ error: 'not_found' });
+    }
+
+    const { streams, ...profile } = ngo;
+
+    // `balance + withdrawn` per stream is what's actually been committed to
+    // this NGO (deposits plus top-ups, net of anything refunded back to a
+    // donor on cancel) — not the same as the original deposit once top-ups
+    // or cancellations have happened.
+    const totalCommitted = streams.reduce(
+      (sum, s) => sum + BigInt(s.balance) + BigInt(s.withdrawn),
+      0n,
+    );
+    const totalWithdrawn = streams.reduce((sum, s) => sum + BigInt(s.withdrawn), 0n);
+
+    return {
+      ...profile,
+      stats: {
+        totalCommitted: totalCommitted.toString(),
+        totalWithdrawn: totalWithdrawn.toString(),
+        activeStreamCount: streams.filter((s) => s.status === 'ACTIVE').length,
+        donorCount: new Set(streams.map((s) => s.donorId)).size,
+      },
+    };
+  });
 }
