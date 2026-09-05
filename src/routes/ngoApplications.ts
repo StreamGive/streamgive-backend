@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 
 import { prisma } from '../db.js';
-import { requireAdminApiKey } from '../middleware/adminAuth.js';
+import { requireAdminSignature } from '../middleware/adminAuth.js';
 
 const applicationSchema = z.object({
   ownerAddress: z.string().min(1),
@@ -39,7 +39,7 @@ export async function ngoApplicationRoutes(app: FastifyInstance): Promise<void> 
     return reply.code(201).send(application);
   });
 
-  app.get('/ngo-applications', { preHandler: requireAdminApiKey }, async (request, reply) => {
+  app.get('/ngo-applications', { preHandler: requireAdminSignature }, async (request, reply) => {
     const parsed = listQuerySchema.safeParse(request.query);
     if (!parsed.success) {
       return reply.code(400).send({ error: 'invalid_request', details: parsed.error.flatten() });
@@ -54,7 +54,7 @@ export async function ngoApplicationRoutes(app: FastifyInstance): Promise<void> 
 
   app.post(
     '/ngo-applications/:id/approve',
-    { preHandler: requireAdminApiKey },
+    { preHandler: requireAdminSignature },
     async (request, reply) => {
       const { id } = request.params as { id: string };
       const parsed = reviewBodySchema.safeParse(request.body ?? {});
@@ -75,7 +75,7 @@ export async function ngoApplicationRoutes(app: FastifyInstance): Promise<void> 
 
   app.post(
     '/ngo-applications/:id/reject',
-    { preHandler: requireAdminApiKey },
+    { preHandler: requireAdminSignature },
     async (request, reply) => {
       const { id } = request.params as { id: string };
       const parsed = reviewBodySchema.safeParse(request.body ?? {});
