@@ -1,6 +1,7 @@
 import Fastify from 'fastify';
 
 import { prisma } from './db.js';
+import { impactRoutes } from './routes/impact.js';
 import { ngoRoutes } from './routes/ngos.js';
 import { streamRoutes } from './routes/streams.js';
 
@@ -14,6 +15,7 @@ export function buildServer() {
 
   app.register(ngoRoutes);
   app.register(streamRoutes);
+  app.register(impactRoutes);
 
   return app;
 }
