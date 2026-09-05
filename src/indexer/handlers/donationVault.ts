@@ -1,6 +1,7 @@
 import { scValToNative } from '@stellar/stellar-sdk';
 
 import { prisma } from '../../db.js';
+import { notify } from '../../notifications/service.js';
 import type { ContractEvent } from '../worker.js';
 
 async function ensureDonor(address: string) {
@@ -55,6 +56,13 @@ async function handleStreamCreated(event: ContractEvent): Promise<void> {
     },
     update: {},
   });
+
+  await notify({
+    type: 'stream_created',
+    streamId: onChainId.toString(),
+    donorAddress: donorVal.toString(),
+    ngoId: ngo.id,
+  });
 }
 
 /** Withdraw's event payload is just the accrued amount, so the new balance
@@ -74,6 +82,12 @@ async function handleWithdraw(event: ContractEvent): Promise<void> {
       withdrawn: (BigInt(stream.withdrawn) + accrued).toString(),
     },
   });
+
+  await notify({
+    type: 'stream_withdrawn',
+    streamId: onChainId.toString(),
+    amount: accrued.toString(),
+  });
 }
 
 /** Cancel's payload carries both the settled amount and the refund, so —
@@ -81,7 +95,7 @@ async function handleWithdraw(event: ContractEvent): Promise<void> {
 async function handleCancel(event: ContractEvent): Promise<void> {
   const [, streamIdVal] = event.topic;
   const onChainId = scValToNative(streamIdVal) as bigint;
-  const [accrued] = scValToNative(event.value) as [bigint, bigint];
+  const [accrued, refund] = scValToNative(event.value) as [bigint, bigint];
 
   const stream = await prisma.stream.findUnique({ where: { onChainId } });
   if (!stream) return;
@@ -94,6 +108,13 @@ async function handleCancel(event: ContractEvent): Promise<void> {
       rate: '0',
       status: 'CANCELLED',
     },
+  });
+
+  await notify({
+    type: 'stream_cancelled',
+    streamId: onChainId.toString(),
+    settledToNgo: accrued.toString(),
+    refundToDonor: refund.toString(),
   });
 }
 
