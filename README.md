@@ -10,6 +10,26 @@ serves the data that powers the frontend.
 - Fastify (API server)
 - PostgreSQL
 
+## Local development
+
+```
+cp .env.example .env
+docker compose up -d postgres   # starts Postgres (+ a streamgive_test DB)
+npm install
+npm run db:push                 # sync the schema onto streamgive
+npm run dev
+```
+
+To run the whole stack containerized instead: `docker compose up --build`.
+
+To run the integration test suite, additionally:
+
+```
+cp .env.test.example .env.test
+npm run db:push:test
+npm test
+```
+
 ## Related repositories
 
 - [streamgive-contracts](https://github.com/streamgive/streamgive-contracts) — Soroban smart contracts
