@@ -57,6 +57,63 @@ ledger, not from the contract's history).
 until it's configured — set it to the Stellar public key (`G...`) that
 matches the `admin` configured on the deployed contracts. See
 [ENVIRONMENT.md](./ENVIRONMENT.md).
+## Notification events
+
+When `NOTIFY_WEBHOOK_URL` is set, the indexer POSTs a JSON body to that URL
+for each on-chain event it processes (see
+[src/notifications/service.ts](./src/notifications/service.ts)). The body is
+one of the following shapes, discriminated by `type`
+(see [src/notifications/types.ts](./src/notifications/types.ts)):
+
+### `stream_created`
+
+Emitted when a donor opens a new donation stream to an NGO.
+
+```json
+{
+  "type": "stream_created",
+  "streamId": "1234",
+  "donorAddress": "GABC...",
+  "ngoId": "clx1y2z3..."
+}
+```
+
+- `streamId` — the stream's on-chain id, as a string.
+- `donorAddress` — the donor's Stellar account address.
+- `ngoId` — the internal (database) id of the receiving NGO.
+
+### `stream_withdrawn`
+
+Emitted when accrued funds are withdrawn to the NGO from an active stream.
+
+```json
+{
+  "type": "stream_withdrawn",
+  "streamId": "1234",
+  "amount": "500000000"
+}
+```
+
+- `streamId` — the stream's on-chain id, as a string.
+- `amount` — the amount withdrawn, in the stream's token base units, as a string.
+
+### `stream_cancelled`
+
+Emitted when a stream is cancelled, settling accrued funds to the NGO and
+refunding the remaining balance to the donor.
+
+```json
+{
+  "type": "stream_cancelled",
+  "streamId": "1234",
+  "settledToNgo": "500000000",
+  "refundToDonor": "1500000000"
+}
+```
+
+- `streamId` — the stream's on-chain id, as a string.
+- `settledToNgo` — the amount settled to the NGO at cancellation time, in the stream's token base units, as a string.
+- `refundToDonor` — the amount refunded to the donor, in the stream's token base units, as a string.
 
 ## Related repositories
 
