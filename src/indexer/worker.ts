@@ -54,6 +54,15 @@ async function pollOnce(handleEvent: EventHandler): Promise<void> {
 
 /** Starts polling for contract events on an interval. Returns a stop function. */
 export function startIndexer(handleEvent: EventHandler): () => void {
+  if (WATCHED_CONTRACT_IDS.length === 0) {
+    // Expected on a fresh local setup before contracts are deployed, not a
+    // bug — pollOnce() no-ops until at least one contract id is set. Logged
+    // once here (rather than every poll) so it's visible without being noisy.
+    console.warn(
+      'indexer: NGO_REGISTRY_CONTRACT_ID and DONATION_VAULT_CONTRACT_ID are both unset — no-op until at least one is set. See ENVIRONMENT.md.',
+    );
+  }
+
   const interval = setInterval(() => {
     pollOnce(handleEvent).catch((err: unknown) => {
       console.error('indexer poll failed', err);
