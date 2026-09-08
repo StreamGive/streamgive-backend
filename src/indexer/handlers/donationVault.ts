@@ -25,6 +25,15 @@ async function ensureNgo(ownerAddress: string) {
   });
 }
 
+/**
+ * Handles the donation-vault contract's `created` event, emitted when a
+ * donor opens a new streaming donation to an NGO.
+ *
+ * Writes: upserts the `donor` and `ngo` rows (creating them if this is the
+ * first time either address has been seen), then upserts a `stream` row
+ * with status `ACTIVE`, the initial deposit as `balance`, and `withdrawn`
+ * set to `0`. Emits a `stream_created` notification.
+ */
 async function handleStreamCreated(event: ContractEvent): Promise<void> {
   const [, streamIdVal] = event.topic;
   const onChainId = scValToNative(streamIdVal) as bigint;
@@ -65,8 +74,17 @@ async function handleStreamCreated(event: ContractEvent): Promise<void> {
   });
 }
 
-/** Withdraw's event payload is just the accrued amount, so the new balance
- * and withdrawn total are fully determined by it — no ambiguity. */
+/**
+ * Handles the donation-vault contract's `withdraw` event, emitted when
+ * accrued funds are withdrawn to the NGO from an active stream.
+ *
+ * Writes: updates the matching `stream` row, subtracting the accrued
+ * amount from `balance` and adding it to `withdrawn`. No-ops if the stream
+ * isn't known yet. Emits a `stream_withdrawn` notification.
+ *
+ * Withdraw's event payload is just the accrued amount, so the new balance
+ * and withdrawn total are fully determined by it — no ambiguity.
+ */
 async function handleWithdraw(event: ContractEvent): Promise<void> {
   const [, streamIdVal] = event.topic;
   const onChainId = scValToNative(streamIdVal) as bigint;
@@ -90,8 +108,19 @@ async function handleWithdraw(event: ContractEvent): Promise<void> {
   });
 }
 
-/** Cancel's payload carries both the settled amount and the refund, so —
- * like withdraw — the resulting state is fully determined by the event. */
+/**
+ * Handles the donation-vault contract's `cancel` event, emitted when a
+ * stream is cancelled, settling accrued funds to the NGO and refunding the
+ * remaining balance to the donor.
+ *
+ * Writes: updates the matching `stream` row — adds the settled amount to
+ * `withdrawn`, zeroes `balance` and `rate`, and sets `status` to
+ * `CANCELLED`. No-ops if the stream isn't known yet. Emits a
+ * `stream_cancelled` notification.
+ *
+ * Cancel's payload carries both the settled amount and the refund, so —
+ * like withdraw — the resulting state is fully determined by the event.
+ */
 async function handleCancel(event: ContractEvent): Promise<void> {
   const [, streamIdVal] = event.topic;
   const onChainId = scValToNative(streamIdVal) as bigint;
@@ -118,6 +147,13 @@ async function handleCancel(event: ContractEvent): Promise<void> {
   });
 }
 
+/**
+ * Entry point for all donation-vault contract events. Dispatches on the
+ * event's topic to the handler for that on-chain event:
+ * `created` → {@link handleStreamCreated}, `withdraw` → {@link handleWithdraw},
+ * `cancel` → {@link handleCancel}. `topup` and `ratemod` are deliberately
+ * unhandled for now (see comment below); any other topic is ignored.
+ */
 export async function handleDonationVaultEvent(event: ContractEvent): Promise<void> {
   const [topicSymbol] = event.topic;
   const topic = scValToNative(topicSymbol) as string;
