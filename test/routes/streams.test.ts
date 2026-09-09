@@ -124,3 +124,60 @@ describe('GET /streams', () => {
     await app.close();
   });
 });
+
+describe('GET /streams/:id', () => {
+  afterEach(async () => {
+    await resetDb();
+  });
+
+  it('returns a single stream', async () => {
+    const app = buildServer();
+
+    const donor = await prisma.donor.create({ data: { address: fakeAddress('A') } });
+    const ngo = await prisma.ngo.create({
+      data: { ownerAddress: fakeAddress('B'), name: 'NGO', verified: true },
+    });
+    const stream = await prisma.stream.create({
+      data: {
+        onChainId: 1n,
+        donorId: donor.id,
+        ngoId: ngo.id,
+        tokenAddress: fakeAddress('D'),
+        rate: '1',
+        balance: '100',
+        withdrawn: '0',
+      },
+    });
+
+    const response = await app.inject({ method: 'GET', url: `/streams/${stream.id}` });
+    expect(response.statusCode).toBe(200);
+
+    const body = response.json();
+    expect(body.id).toBe(stream.id);
+    expect(body.onChainId).toBe('1');
+    expect(typeof body.onChainId).toBe('string');
+
+    await app.close();
+  });
+
+  it('404s for an id that does not exist', async () => {
+    const app = buildServer();
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/streams/00000000-0000-0000-0000-000000000000',
+    });
+    expect(response.statusCode).toBe(404);
+
+    await app.close();
+  });
+
+  it('400s for a malformed id instead of leaking a Prisma error', async () => {
+    const app = buildServer();
+
+    const response = await app.inject({ method: 'GET', url: '/streams/not-a-uuid' });
+    expect(response.statusCode).toBe(400);
+
+    await app.close();
+  });
+});
