@@ -10,6 +10,9 @@ const querySchema = z.object({
     .regex(/^G[A-Z2-7]{55}$/)
     .optional(),
   ngo: z.string().uuid().optional(),
+  limit: z.coerce.number().int().min(1).max(100).default(100),
+  // A stream id from a previous page's last item; results start right after it.
+  cursor: z.string().uuid().optional(),
 });
 
 export async function streamRoutes(app: FastifyInstance): Promise<void> {
@@ -23,7 +26,7 @@ export async function streamRoutes(app: FastifyInstance): Promise<void> {
     // `donor` filters by wallet address (donors have no public directory of
     // their own); `ngo` filters by the NGO's internal id, matching what
     // GET /ngos and /ngos/:id expose.
-    const { donor, ngo } = parsedQuery.data;
+    const { donor, ngo, limit, cursor } = parsedQuery.data;
 
     const streams = await prisma.stream.findMany({
       where: {
@@ -31,7 +34,8 @@ export async function streamRoutes(app: FastifyInstance): Promise<void> {
         ...(ngo ? { ngoId: ngo } : {}),
       },
       orderBy: { createdAt: 'desc' },
-      take: 100,
+      take: limit,
+      ...(cursor ? { skip: 1, cursor: { id: cursor } } : {}),
       include: {
         donor: { select: { address: true } },
         ngo: { select: { id: true, name: true, ownerAddress: true } },
