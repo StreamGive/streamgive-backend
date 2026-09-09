@@ -15,6 +15,21 @@ const querySchema = z.object({
   cursor: z.string().uuid().optional(),
 });
 
+const idParamSchema = z.object({ id: z.string().uuid() });
+
+const streamInclude = {
+  donor: { select: { address: true } },
+  ngo: { select: { id: true, name: true, ownerAddress: true } },
+} as const;
+
+// onChainId is a BigInt; Fastify's default JSON.stringify serializer (no
+// response schema is defined yet) throws on BigInt, so it has to go out as
+// a string.
+function serializeStream<T extends { onChainId: bigint }>(stream: T) {
+  const { onChainId, ...rest } = stream;
+  return { ...rest, onChainId: onChainId.toString() };
+}
+
 export async function streamRoutes(app: FastifyInstance): Promise<void> {
   app.get('/streams', async (request, reply) => {
     const parsedQuery = querySchema.safeParse(request.query);
@@ -36,18 +51,27 @@ export async function streamRoutes(app: FastifyInstance): Promise<void> {
       orderBy: { createdAt: 'desc' },
       take: limit,
       ...(cursor ? { skip: 1, cursor: { id: cursor } } : {}),
-      include: {
-        donor: { select: { address: true } },
-        ngo: { select: { id: true, name: true, ownerAddress: true } },
-      },
+      include: streamInclude,
     });
 
-    // onChainId is a BigInt; Fastify's default JSON.stringify serializer
-    // (no response schema is defined yet) throws on BigInt, so it has to
-    // go out as a string.
-    return streams.map(({ onChainId, ...rest }) => ({
-      ...rest,
-      onChainId: onChainId.toString(),
-    }));
+    return streams.map(serializeStream);
+  });
+
+  app.get('/streams/:id', async (request, reply) => {
+    const parsedParams = idParamSchema.safeParse(request.params);
+    if (!parsedParams.success) {
+      return reply.code(400).send({ error: 'invalid_request' });
+    }
+
+    const stream = await prisma.stream.findUnique({
+      where: { id: parsedParams.data.id },
+      include: streamInclude,
+    });
+
+    if (!stream) {
+      return reply.code(404).send({ error: 'not_found' });
+    }
+
+    return serializeStream(stream);
   });
 }
