@@ -30,6 +30,53 @@ describe('GET /ngos', () => {
   });
 });
 
+describe('GET /ngos/lookup', () => {
+  afterEach(async () => {
+    await resetDb();
+  });
+
+  it('finds the NGO matching the given address', async () => {
+    const app = buildServer();
+
+    const ngo = await prisma.ngo.create({
+      data: { ownerAddress: fakeAddress('A'), name: 'Impact NGO', verified: true },
+    });
+
+    const response = await app.inject({
+      method: 'GET',
+      url: `/ngos/lookup?address=${ngo.ownerAddress}`,
+    });
+    expect(response.statusCode).toBe(200);
+
+    const body = response.json();
+    expect(body.id).toBe(ngo.id);
+    expect(body.name).toBe('Impact NGO');
+
+    await app.close();
+  });
+
+  it('404s when no NGO matches the address', async () => {
+    const app = buildServer();
+
+    const response = await app.inject({
+      method: 'GET',
+      url: `/ngos/lookup?address=${fakeAddress('Z')}`,
+    });
+    expect(response.statusCode).toBe(404);
+
+    await app.close();
+  });
+
+  it('400s on a malformed address instead of matching nothing silently', async () => {
+    const app = buildServer();
+
+    const response = await app.inject({ method: 'GET', url: '/ngos/lookup?address=not-an-address' });
+    expect(response.statusCode).toBe(400);
+
+    await app.close();
+  });
+});
+
 describe('GET /ngos/:id', () => {
   afterEach(async () => {
     await resetDb();
