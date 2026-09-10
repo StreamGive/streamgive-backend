@@ -15,7 +15,11 @@ const applicationSchema = z.object({
 
 const listQuerySchema = z.object({
   status: z.enum(['PENDING', 'APPROVED', 'REJECTED']).optional(),
+  limit: z.coerce.number().int().min(1).max(100).default(100),
+  offset: z.coerce.number().int().min(0).default(0),
 });
+
+const idParamSchema = z.object({ id: z.string().uuid() });
 
 const reviewBodySchema = z.object({
   reviewNote: z.string().max(2000).optional(),
@@ -53,12 +57,40 @@ export async function ngoApplicationRoutes(app: FastifyInstance): Promise<void> 
       return reply.code(400).send({ error: 'invalid_request', details: parsed.error.flatten() });
     }
 
-    return prisma.ngoApplication.findMany({
-      where: parsed.data.status ? { status: parsed.data.status } : {},
-      orderBy: { createdAt: 'desc' },
-      take: 100,
-    });
+    const where = parsed.data.status ? { status: parsed.data.status } : {};
+
+    const [applications, total] = await Promise.all([
+      prisma.ngoApplication.findMany({
+        where,
+        orderBy: { createdAt: 'desc' },
+        take: parsed.data.limit,
+        skip: parsed.data.offset,
+      }),
+      prisma.ngoApplication.count({ where }),
+    ]);
+
+    return { applications, total, limit: parsed.data.limit, offset: parsed.data.offset };
   });
+
+  app.get(
+    '/ngo-applications/:id',
+    { preHandler: requireAdminSignature },
+    async (request, reply) => {
+      const parsedParams = idParamSchema.safeParse(request.params);
+      if (!parsedParams.success) {
+        return reply.code(400).send({ error: 'invalid_request' });
+      }
+
+      const application = await prisma.ngoApplication.findUnique({
+        where: { id: parsedParams.data.id },
+      });
+      if (!application) {
+        return reply.code(404).send({ error: 'not_found' });
+      }
+
+      return application;
+    },
+  );
 
   app.post(
     '/ngo-applications/:id/approve',
