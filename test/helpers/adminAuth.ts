@@ -12,7 +12,11 @@ export function signAdminRequest(
 ): Record<string, string> {
   const timestamp = Date.now().toString();
   const payload = `${method}:${url}:${timestamp}`;
-  const signature = keypair.sign(sep53Hash(payload)).toString('base64');
+  // `sign()` returns a Uint8Array, not a Buffer — calling `.toString('base64')`
+  // on it straight would hit Array.prototype.toString, which ignores the
+  // encoding argument and yields "166,129,8,..." (decimal bytes). That decodes
+  // back to garbage, so every signed request would 401. Wrap it first.
+  const signature = Buffer.from(keypair.sign(sep53Hash(payload))).toString('base64');
 
   return {
     'x-admin-address': keypair.publicKey(),
