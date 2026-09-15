@@ -1,0 +1,39 @@
+# Render Blueprint. Create the service from this with Render's
+# "New > Blueprint" flow, pointed at this repository.
+#
+# Secrets are marked `sync: false`, which means Render prompts for them once
+# at creation and stores them itself — they are never committed here.
+# See DEPLOYMENT.md.
+
+services:
+  - type: web
+    name: streamgive-backend
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: free
+    # Closest Render region to the Supabase project in eu-west-1.
+    region: frankfurt
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+
+      # PORT is deliberately absent: Render injects its own, and the server
+      # reads process.env.PORT. Hardcoding one here makes the health check
+      # fail against a container listening somewhere else.
+
+      - key: DATABASE_URL
+        sync: false
+      - key: ADMIN_ADDRESS
+        sync: false
+      - key: CORS_ORIGINS
+        sync: false
+
+      - key: SOROBAN_RPC_URL
+        value: https://soroban-testnet.stellar.org
+      - key: NGO_REGISTRY_CONTRACT_ID
+        value: CCPWQBI7FV2CZ7EECOVZ5XHOHK5S7CS6XTBDWPWHBEOKPTIASNGOBQFH
+      - key: DONATION_VAULT_CONTRACT_ID
+        value: CDLKBGX3VTFZZBVBNQYHF47PQO6I7UTBYVVQE3BPJDONF6G4U33Z7VLH
+      - key: INDEXER_POLL_INTERVAL_MS
+        value: "5000"
