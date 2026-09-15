@@ -1,6 +1,14 @@
 generator client {
   provider = "prisma-client"
   output   = "../src/generated/prisma"
+
+  // Pinned rather than inferred. Prisma decides this from the surrounding
+  // project when it is not set, and the Docker build runs `prisma generate`
+  // during `npm ci` - before tsconfig.json has been copied in - so it
+  // guessed .ts there and .js locally. tsc copies specifiers through
+  // verbatim, so the image ended up importing .ts files that do not exist
+  // in dist/ and crashed on boot with ERR_MODULE_NOT_FOUND.
+  importFileExtension = "js"
 }
 
 datasource db {
