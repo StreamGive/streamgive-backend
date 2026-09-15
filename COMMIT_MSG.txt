@@ -1,0 +1,23 @@
+fix: unblock the admin panel - CORS and signature encoding
+
+Two things stopped the browser app talking to this API.
+
+The first was CORS: there was no configuration at all, so every call from
+the frontend was blocked before it returned, surfacing as an opaque
+"Failed to fetch" with a perfectly healthy server behind it. Origins come
+from CORS_ORIGINS and are an explicit allowlist rather than a wildcard,
+because the admin routes authenticate with a signature sent as a request
+header - any origin allowed here can ask a signed-in admin's browser to
+call them. The signing headers are named in allowedHeaders so the
+preflight on those routes passes.
+
+The second was the signature encoding. SEP-53 pins down what gets signed
+- SHA256 of the prefixed message - but not how the wallet returns the
+signature, and wallets differ: some base64, some hex. Only base64 was
+accepted, so a real wallet returning hex looked identical to a forged
+signature. Both are now tried, which costs nothing in trust since the
+signature still has to verify against ADMIN_ADDRESS, and the length check
+rules out a wrong guess because ed25519 signatures are always 64 bytes.
+
+A failed check now logs the payload and the decoded lengths, so the next
+one of these is diagnosable instead of an opaque 401.

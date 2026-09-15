@@ -1,3 +1,4 @@
+import cors from '@fastify/cors';
 import rateLimit from '@fastify/rate-limit';
 import Fastify from 'fastify';
 
@@ -22,6 +23,25 @@ export function buildServer() {
       // devDependency on purpose, since the production image never needs it.
       transport: USE_PRETTY_LOGS ? { target: 'pino-pretty' } : undefined,
     },
+  });
+
+  // The browser app runs on a different origin to this API (a different
+  // port in development, a different host in deployment), so every call
+  // from it is cross-origin and fails as an opaque "Failed to fetch"
+  // without these headers.
+  //
+  // Allowed origins are an explicit list, not a wildcard: the admin routes
+  // authenticate with a signature the browser sends as a header, so any
+  // origin allowed here can ask a signed-in admin's browser to call them.
+  const allowedOrigins = (process.env.CORS_ORIGINS ?? 'http://localhost:3001')
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter((origin) => origin.length > 0);
+
+  app.register(cors, {
+    origin: allowedOrigins,
+    methods: ['GET', 'POST', 'OPTIONS'],
+    allowedHeaders: ['content-type', 'x-admin-address', 'x-admin-signature', 'x-admin-timestamp'],
   });
 
   app.register(rateLimit, {

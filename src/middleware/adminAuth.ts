@@ -4,6 +4,10 @@ import { createHash } from 'node:crypto';
 
 const MAX_CLOCK_SKEW_MS = 5 * 60 * 1000;
 
+/** ed25519 signatures are always 64 bytes. A decode that yields any other
+ * length means the encoding guess was wrong, not that the key was. */
+const ED25519_SIGNATURE_BYTES = 64;
+
 // SEP-53 ("Sign and Verify Messages"): a wallet's generic message-signing
 // call doesn't sign the raw bytes you hand it — it signs
 // SHA256(prefix + message), where the fixed prefix below stops a message
@@ -71,11 +75,36 @@ export async function requireAdminSignature(
 
   try {
     const keypair = Keypair.fromPublicKey(address);
-    const isValid = keypair.verify(sep53Hash(payload), Buffer.from(signatureB64, 'base64'));
-    if (!isValid) {
+    const hash = sep53Hash(payload);
+
+    // SEP-53 pins down what gets signed, but not how the wallet hands the
+    // signature back, and wallets differ: some return base64, some hex.
+    // Trying both costs nothing in trust — the signature still has to
+    // verify against ADMIN_ADDRESS either way — and avoids an opaque 401
+    // that looks identical to a genuinely forged one.
+    const candidates: Array<[string, Buffer]> = [
+      ['base64', Buffer.from(signatureB64, 'base64')],
+      ['hex', Buffer.from(signatureB64, 'hex')],
+    ];
+
+    const matched = candidates.find(
+      ([, sig]) => sig.length === ED25519_SIGNATURE_BYTES && keypair.verify(hash, sig),
+    );
+
+    if (!matched) {
+      request.log.warn(
+        {
+          payload,
+          signatureChars: signatureB64.length,
+          base64Bytes: candidates[0][1].length,
+          hexBytes: candidates[1][1].length,
+        },
+        'admin signature did not verify',
+      );
       reply.code(401).send({ error: 'unauthorized' });
     }
-  } catch {
+  } catch (err) {
+    request.log.warn({ err }, 'admin signature check threw');
     reply.code(401).send({ error: 'unauthorized' });
   }
 }
