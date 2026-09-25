@@ -70,6 +70,77 @@ describe('POST /ngo-applications', () => {
   });
 });
 
+describe('GET /ngo-applications/status', () => {
+  afterEach(async () => {
+    await resetDb();
+  });
+
+  it('returns only status and timestamps for the latest application', async () => {
+    const app = buildServer();
+    const ownerAddress = fakeAddress('S');
+
+    await prisma.ngoApplication.create({
+      data: validApplicationPayload({ ownerAddress, status: 'REJECTED' }),
+    });
+    const latest = await prisma.ngoApplication.create({
+      data: validApplicationPayload({ ownerAddress, status: 'APPROVED' }),
+    });
+
+    const response = await app.inject({
+      method: 'GET',
+      url: `/ngo-applications/status?ownerAddress=${ownerAddress}`,
+    });
+
+    expect(response.statusCode).toBe(200);
+    const body = response.json();
+    expect(body.status).toBe('APPROVED');
+    expect(body.createdAt).toBe(latest.createdAt.toISOString());
+    expect(body.updatedAt).toBe(latest.updatedAt.toISOString());
+    // No contact details or other application fields leak out.
+    expect(Object.keys(body).sort()).toEqual(['createdAt', 'status', 'updatedAt']);
+
+    await app.close();
+  });
+
+  it('returns 404 when the address has no application', async () => {
+    const app = buildServer();
+
+    const response = await app.inject({
+      method: 'GET',
+      url: `/ngo-applications/status?ownerAddress=${fakeAddress('N')}`,
+    });
+
+    expect(response.statusCode).toBe(404);
+    expect(response.json().error).toBe('not_found');
+
+    await app.close();
+  });
+
+  it('rejects a malformed address with 400', async () => {
+    const app = buildServer();
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/ngo-applications/status?ownerAddress=not-an-address',
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json().error).toBe('invalid_request');
+
+    await app.close();
+  });
+
+  it('rejects a missing address with 400', async () => {
+    const app = buildServer();
+
+    const response = await app.inject({ method: 'GET', url: '/ngo-applications/status' });
+
+    expect(response.statusCode).toBe(400);
+
+    await app.close();
+  });
+});
+
 describe('admin NGO application review', () => {
   beforeAll(() => {
     process.env.ADMIN_ADDRESS = adminKeypair.publicKey();
