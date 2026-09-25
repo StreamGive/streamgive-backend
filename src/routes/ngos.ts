@@ -27,6 +27,12 @@ async function findNgoDetail(where: { id: string } | { ownerAddress: string }) {
     return null;
   }
 
+  const approvedApp = await prisma.ngoApplication.findFirst({
+    where: { ownerAddress: ngo.ownerAddress, status: 'APPROVED' },
+    orderBy: { updatedAt: 'desc' },
+    select: { description: true, website: true, country: true },
+  });
+
   const { streams, ...profile } = ngo;
 
   // `balance + withdrawn` per stream is what's actually been committed to
@@ -41,6 +47,9 @@ async function findNgoDetail(where: { id: string } | { ownerAddress: string }) {
 
   return {
     ...profile,
+    description: approvedApp?.description ?? null,
+    website: approvedApp?.website ?? null,
+    country: approvedApp?.country ?? null,
     stats: {
       totalCommitted: totalCommitted.toString(),
       totalWithdrawn: totalWithdrawn.toString(),
