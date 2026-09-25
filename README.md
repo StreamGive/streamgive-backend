@@ -17,8 +17,11 @@ cp .env.example .env
 docker compose up -d postgres   # starts Postgres (+ a streamgive_test DB)
 npm install
 npm run db:push                 # sync the schema onto streamgive
+npm run db:seed                 # optional: load sample NGOs, donors and streams
 npm run dev
 ```
+
+`npm run db:seed` uses upserts, so it is safe to run more than once.
 
 To run the whole stack containerized instead, after `npm run db:push` above: `docker compose up --build`.
 
