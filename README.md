@@ -60,6 +60,12 @@ ledger, not from the contract's history).
 until it's configured — set it to the Stellar public key (`G...`) that
 matches the `admin` configured on the deployed contracts. See
 [ENVIRONMENT.md](./ENVIRONMENT.md).
+## Indexer
+
+See [docs/INDEXER.md](./docs/INDEXER.md) for a full table of which on-chain
+events the indexer handles, which tables each one writes, and how the
+checkpoint and out-of-window recovery work.
+
 ## Notification events
 
 When `NOTIFY_WEBHOOK_URL` is set, the indexer POSTs a JSON body to that URL
