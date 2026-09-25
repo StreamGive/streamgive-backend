@@ -19,7 +19,8 @@
     "db:migrate": "prisma migrate dev",
     "db:push": "prisma db push",
     "db:push:test": "dotenv -e .env.test -- prisma db push",
-    "db:studio": "prisma studio"
+    "db:studio": "prisma studio",
+    "db:seed": "tsx prisma/seed.ts"
   },
   "dependencies": {
     "@fastify/cors": "^11.3.0",
