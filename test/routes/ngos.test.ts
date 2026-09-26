@@ -23,8 +23,42 @@ describe('GET /ngos', () => {
     expect(response.statusCode).toBe(200);
 
     const body = response.json();
-    expect(body).toHaveLength(1);
-    expect(body[0].name).toBe('Verified NGO');
+    expect(body.ngos).toHaveLength(1);
+    expect(body.ngos[0].name).toBe('Verified NGO');
+    expect(body.nextCursor).toBeNull();
+
+    await app.close();
+  });
+
+  it('paginates with cursor and returns no overlap between pages', async () => {
+    const app = buildServer();
+
+    // Create 3 verified NGOs — oldest first so createdAt desc gives C, B, A.
+    for (const char of ['A', 'B', 'C']) {
+      await prisma.ngo.create({
+        data: { ownerAddress: fakeAddress(char), name: `NGO ${char}`, verified: true },
+      });
+    }
+
+    const firstPage = await app.inject({ method: 'GET', url: '/ngos?limit=2' });
+    expect(firstPage.statusCode).toBe(200);
+    const firstBody = firstPage.json();
+    expect(firstBody.ngos).toHaveLength(2);
+    expect(firstBody.nextCursor).not.toBeNull();
+    const firstIds = firstBody.ngos.map((n: { id: string }) => n.id);
+
+    const secondPage = await app.inject({
+      method: 'GET',
+      url: `/ngos?limit=2&cursor=${firstBody.nextCursor}`,
+    });
+    expect(secondPage.statusCode).toBe(200);
+    const secondBody = secondPage.json();
+    expect(secondBody.ngos).toHaveLength(1);
+    expect(secondBody.nextCursor).toBeNull();
+
+    // No overlap between pages.
+    const secondIds = secondBody.ngos.map((n: { id: string }) => n.id);
+    expect(secondIds.some((id: string) => firstIds.includes(id))).toBe(false);
 
     await app.close();
   });
