@@ -4,6 +4,82 @@ import { prisma } from '../../src/db.js';
 import { buildServer } from '../../src/server.js';
 import { fakeAddress, resetDb } from '../helpers/db.js';
 
+describe('GET /impact', () => {
+  afterEach(async () => {
+    await resetDb();
+  });
+
+  it('returns zeroed totals when the platform has no data', async () => {
+    const app = buildServer();
+
+    const response = await app.inject({ method: 'GET', url: '/impact' });
+    expect(response.statusCode).toBe(200);
+
+    const body = response.json();
+    expect(body.totalCommitted).toBe('0');
+    expect(body.totalWithdrawn).toBe('0');
+    expect(body.activeStreams).toBe(0);
+    expect(body.verifiedNgoCount).toBe(0);
+
+    await app.close();
+  });
+
+  it('aggregates totals across multiple NGOs and streams', async () => {
+    const app = buildServer();
+
+    const ngo1 = await prisma.ngo.create({
+      data: { ownerAddress: fakeAddress('A'), name: 'NGO One', verified: true },
+    });
+    const ngo2 = await prisma.ngo.create({
+      data: { ownerAddress: fakeAddress('B'), name: 'NGO Two', verified: true },
+    });
+    await prisma.ngo.create({
+      data: { ownerAddress: fakeAddress('C'), name: 'Unverified NGO', verified: false },
+    });
+    const donor = await prisma.donor.create({ data: { address: fakeAddress('D') } });
+
+    // ngo1: active stream — balance=600, withdrawn=400
+    await prisma.stream.create({
+      data: {
+        onChainId: 1n,
+        donorId: donor.id,
+        ngoId: ngo1.id,
+        tokenAddress: fakeAddress('T'),
+        rate: '10',
+        balance: '600',
+        withdrawn: '400',
+        status: 'ACTIVE',
+      },
+    });
+    // ngo2: cancelled stream — balance=0, withdrawn=200
+    await prisma.stream.create({
+      data: {
+        onChainId: 2n,
+        donorId: donor.id,
+        ngoId: ngo2.id,
+        tokenAddress: fakeAddress('T'),
+        rate: '0',
+        balance: '0',
+        withdrawn: '200',
+        status: 'CANCELLED',
+      },
+    });
+
+    const response = await app.inject({ method: 'GET', url: '/impact' });
+    expect(response.statusCode).toBe(200);
+
+    const body = response.json();
+    // committed = (600+400) + (0+200) = 1200
+    expect(body.totalCommitted).toBe('1200');
+    // withdrawn = 400 + 200 = 600
+    expect(body.totalWithdrawn).toBe('600');
+    expect(body.activeStreams).toBe(1);
+    expect(body.verifiedNgoCount).toBe(2);
+
+    await app.close();
+  });
+});
+
 describe('GET /impact/:ngoId', () => {
   afterEach(async () => {
     await resetDb();

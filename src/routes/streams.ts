@@ -43,18 +43,21 @@ export async function streamRoutes(app: FastifyInstance): Promise<void> {
     // GET /ngos and /ngos/:id expose.
     const { donor, ngo, limit, cursor } = parsedQuery.data;
 
-    const streams = await prisma.stream.findMany({
+    const rows = await prisma.stream.findMany({
       where: {
         ...(donor ? { donor: { address: donor } } : {}),
         ...(ngo ? { ngoId: ngo } : {}),
       },
       orderBy: { createdAt: 'desc' },
-      take: limit,
+      take: limit + 1,
       ...(cursor ? { skip: 1, cursor: { id: cursor } } : {}),
       include: streamInclude,
     });
 
-    return streams.map(serializeStream);
+    const hasMore = rows.length > limit;
+    const streams = hasMore ? rows.slice(0, limit) : rows;
+
+    return { streams: streams.map(serializeStream), hasMore };
   });
 
   app.get('/streams/:id', async (request, reply) => {

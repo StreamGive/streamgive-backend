@@ -48,10 +48,11 @@ describe('GET /streams', () => {
     expect(response.statusCode).toBe(200);
 
     const body = response.json();
-    expect(body).toHaveLength(1);
-    expect(body[0].onChainId).toBe('1');
+    expect(body.streams).toHaveLength(1);
+    expect(body.streams[0].onChainId).toBe('1');
     // Serialized as a string — the route must never hand back a raw BigInt.
-    expect(typeof body[0].onChainId).toBe('string');
+    expect(typeof body.streams[0].onChainId).toBe('string');
+    expect(body.hasMore).toBe(false);
 
     await app.close();
   });
@@ -109,17 +110,48 @@ describe('GET /streams', () => {
     });
     expect(firstPage.statusCode).toBe(200);
     const firstBody = firstPage.json();
-    expect(firstBody).toHaveLength(2);
-    expect(firstBody.map((s: { onChainId: string }) => s.onChainId)).toEqual(['3', '2']);
+    expect(firstBody.streams).toHaveLength(2);
+    expect(firstBody.hasMore).toBe(true);
+    expect(firstBody.streams.map((s: { onChainId: string }) => s.onChainId)).toEqual(['3', '2']);
 
     const secondPage = await app.inject({
       method: 'GET',
-      url: `/streams?ngo=${ngo.id}&limit=2&cursor=${firstBody[1].id}`,
+      url: `/streams?ngo=${ngo.id}&limit=2&cursor=${firstBody.streams[1].id}`,
     });
     expect(secondPage.statusCode).toBe(200);
     const secondBody = secondPage.json();
-    expect(secondBody).toHaveLength(1);
-    expect(secondBody[0].onChainId).toBe('1');
+    expect(secondBody.streams).toHaveLength(1);
+    expect(secondBody.streams[0].onChainId).toBe('1');
+    expect(secondBody.hasMore).toBe(false);
+
+    await app.close();
+  });
+  it('returns hasMore true when more than 100 matching streams exist', async () => {
+    const app = buildServer();
+
+    const donor = await prisma.donor.create({ data: { address: fakeAddress('H') } });
+    const ngo = await prisma.ngo.create({
+      data: { ownerAddress: fakeAddress('I'), name: 'Big NGO', verified: true },
+    });
+
+    await prisma.stream.createMany({
+      data: Array.from({ length: 101 }, (_, i) => ({
+        onChainId: BigInt(100 + i),
+        donorId: donor.id,
+        ngoId: ngo.id,
+        tokenAddress: fakeAddress('T'),
+        rate: '1',
+        balance: '100',
+        withdrawn: '0',
+      })),
+    });
+
+    const response = await app.inject({ method: 'GET', url: `/streams?ngo=${ngo.id}` });
+    expect(response.statusCode).toBe(200);
+
+    const body = response.json();
+    expect(body.streams).toHaveLength(100);
+    expect(body.hasMore).toBe(true);
 
     await app.close();
   });

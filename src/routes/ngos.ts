@@ -5,6 +5,11 @@ import { prisma } from '../db.js';
 
 const idParamSchema = z.object({ id: z.string().uuid() });
 
+const listQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(100).default(100),
+  cursor: z.string().uuid().optional(),
+});
+
 const lookupQuerySchema = z.object({
   // Stellar StrKey ed25519 public key: 'G' + 55 base32 (A-Z2-7) chars.
   address: z
@@ -60,12 +65,27 @@ async function findNgoDetail(where: { id: string } | { ownerAddress: string }) {
 }
 
 export async function ngoRoutes(app: FastifyInstance): Promise<void> {
-  app.get('/ngos', async () => {
-    return prisma.ngo.findMany({
+  app.get('/ngos', async (request, reply) => {
+    const parsedQuery = listQuerySchema.safeParse(request.query);
+    if (!parsedQuery.success) {
+      return reply
+        .code(400)
+        .send({ error: 'invalid_request', details: parsedQuery.error.flatten() });
+    }
+    const { limit, cursor } = parsedQuery.data;
+
+    const rows = await prisma.ngo.findMany({
       where: { verified: true },
       orderBy: { createdAt: 'desc' },
-      take: 100,
+      take: limit + 1,
+      ...(cursor ? { skip: 1, cursor: { id: cursor } } : {}),
     });
+
+    const hasMore = rows.length > limit;
+    const ngos = hasMore ? rows.slice(0, limit) : rows;
+    const nextCursor = hasMore ? ngos[ngos.length - 1].id : null;
+
+    return { ngos, nextCursor };
   });
 
   app.get('/ngos/lookup', async (request, reply) => {
