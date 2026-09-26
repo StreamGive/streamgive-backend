@@ -14,6 +14,27 @@ const paramsSchema = z.object({ ngoId: z.string().uuid() });
  * need to scan every stream on the platform to render.
  */
 export async function impactRoutes(app: FastifyInstance): Promise<void> {
+  app.get('/impact', async () => {
+    const [streams, verifiedNgoCount] = await Promise.all([
+      prisma.stream.findMany({ select: { balance: true, withdrawn: true, status: true } }),
+      prisma.ngo.count({ where: { verified: true } }),
+    ]);
+
+    const totalCommitted = streams.reduce(
+      (sum, s) => sum + BigInt(s.balance) + BigInt(s.withdrawn),
+      0n,
+    );
+    const totalWithdrawn = streams.reduce((sum, s) => sum + BigInt(s.withdrawn), 0n);
+    const activeStreams = streams.filter((s) => s.status === 'ACTIVE').length;
+
+    return {
+      totalCommitted: totalCommitted.toString(),
+      totalWithdrawn: totalWithdrawn.toString(),
+      activeStreams,
+      verifiedNgoCount,
+    };
+  });
+
   app.get('/impact/:ngoId', async (request, reply) => {
     const parsedParams = paramsSchema.safeParse(request.params);
     if (!parsedParams.success) {
