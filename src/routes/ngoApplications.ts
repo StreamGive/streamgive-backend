@@ -21,6 +21,14 @@ const listQuerySchema = z.object({
 
 const idParamSchema = z.object({ id: z.string().uuid() });
 
+const statusQuerySchema = z.object({
+  // Stellar StrKey ed25519 public key: 'G' + 55 base32 (A-Z2-7) chars.
+  // Same regex as GET /ngos/lookup.
+  ownerAddress: z
+    .string()
+    .regex(/^G[A-Z2-7]{55}$/),
+});
+
 const reviewBodySchema = z.object({
   reviewNote: z.string().max(2000).optional(),
 });
@@ -50,6 +58,29 @@ export async function ngoApplicationRoutes(app: FastifyInstance): Promise<void> 
       return reply.code(201).send(application);
     },
   );
+
+  // Public read endpoint: an applicant can check their own review status
+  // without an admin signature. Deliberately returns only the review
+  // outcome and timestamps — never the contact details or description
+  // submitted with the application, since anyone who knows (or guesses) an
+  // address could otherwise read them.
+  app.get('/ngo-applications/status', async (request, reply) => {
+    const parsed = statusQuerySchema.safeParse(request.query);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: 'invalid_request', details: parsed.error.flatten() });
+    }
+
+    const application = await prisma.ngoApplication.findFirst({
+      where: { ownerAddress: parsed.data.ownerAddress },
+      orderBy: { createdAt: 'desc' },
+      select: { status: true, createdAt: true, updatedAt: true },
+    });
+    if (!application) {
+      return reply.code(404).send({ error: 'not_found' });
+    }
+
+    return application;
+  });
 
   app.get('/ngo-applications', { preHandler: requireAdminSignature }, async (request, reply) => {
     const parsed = listQuerySchema.safeParse(request.query);
