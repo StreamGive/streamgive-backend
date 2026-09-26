@@ -1,6 +1,7 @@
 import { scValToNative } from '@stellar/stellar-sdk';
 
 import { prisma } from '../../db.js';
+import { notify } from '../../notifications/service.js';
 import type { ContractEvent } from '../worker.js';
 
 /**
@@ -41,5 +42,21 @@ export async function handleNgoRegistryEvent(event: ContractEvent): Promise<void
       where: { ownerAddress },
       data: { verified: true },
     });
+    const ngo = await prisma.ngo.findFirst({ where: { ownerAddress }, select: { id: true } });
+    if (ngo) {
+      await notify({ type: 'ngo_approved', ownerAddress, ngoId: ngo.id });
+    }
+    return;
+  }
+
+  if (topic === 'revoked') {
+    await prisma.ngo.updateMany({
+      where: { ownerAddress },
+      data: { verified: false },
+    });
+    const ngo = await prisma.ngo.findFirst({ where: { ownerAddress }, select: { id: true } });
+    if (ngo) {
+      await notify({ type: 'ngo_revoked', ownerAddress, ngoId: ngo.id });
+    }
   }
 }

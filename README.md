@@ -124,6 +124,36 @@ refunding the remaining balance to the donor.
 - `settledToNgo` — the amount settled to the NGO at cancellation time, in the stream's token base units, as a string.
 - `refundToDonor` — the amount refunded to the donor, in the stream's token base units, as a string.
 
+### `ngo_approved`
+
+Emitted when an admin approves an NGO on-chain.
+
+```json
+{
+  "type": "ngo_approved",
+  "ownerAddress": "GABC...",
+  "ngoId": "clx1y2z3..."
+}
+```
+
+- `ownerAddress` — the NGO owner's Stellar account address.
+- `ngoId` — the internal (database) id of the approved NGO.
+
+### `ngo_revoked`
+
+Emitted when a previously-approved NGO has its verified status revoked on-chain.
+
+```json
+{
+  "type": "ngo_revoked",
+  "ownerAddress": "GABC...",
+  "ngoId": "clx1y2z3..."
+}
+```
+
+- `ownerAddress` — the NGO owner's Stellar account address.
+- `ngoId` — the internal (database) id of the revoked NGO.
+
 ## Related repositories
 
 - [streamgive-contracts](https://github.com/streamgive/streamgive-contracts) — Soroban smart contracts
