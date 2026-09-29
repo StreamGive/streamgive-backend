@@ -271,6 +271,52 @@ describe('GET /ngos/:id', () => {
     await app.close();
   });
 
+  it('computes stats correctly with a cancelled stream', async () => {
+    const app = buildServer();
+
+    const ngo = await prisma.ngo.create({
+      data: { ownerAddress: fakeAddress('H'), name: 'Mixed Streams NGO', verified: true },
+    });
+    const activeDonor = await prisma.donor.create({ data: { address: fakeAddress('I') } });
+    const cancelledDonor = await prisma.donor.create({ data: { address: fakeAddress('J') } });
+
+    await prisma.stream.createMany({
+      data: [
+        {
+          onChainId: 2n,
+          donorId: activeDonor.id,
+          ngoId: ngo.id,
+          tokenAddress: fakeAddress('K'),
+          rate: '10',
+          balance: '400',
+          withdrawn: '600',
+          status: 'ACTIVE',
+        },
+        {
+          onChainId: 3n,
+          donorId: cancelledDonor.id,
+          ngoId: ngo.id,
+          tokenAddress: fakeAddress('L'),
+          rate: '10',
+          balance: '0',
+          withdrawn: '200',
+          status: 'CANCELLED',
+        },
+      ],
+    });
+
+    const response = await app.inject({ method: 'GET', url: `/ngos/${ngo.id}` });
+    expect(response.statusCode).toBe(200);
+
+    const body = response.json();
+    expect(body.stats.totalCommitted).toBe('1200');
+    expect(body.stats.totalWithdrawn).toBe('800');
+    expect(body.stats.activeStreamCount).toBe(1);
+    expect(body.stats.donorCount).toBe(2);
+
+    await app.close();
+  });
+
   it('includes description, website and country from the approved application', async () => {
     const app = buildServer();
 
