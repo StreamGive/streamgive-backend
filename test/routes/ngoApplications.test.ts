@@ -214,6 +214,32 @@ describe('admin NGO application review', () => {
     await app.close();
   });
 
+  it('rejects a non-UUID application id with 400', async () => {
+    const app = buildServer();
+    const url = '/ngo-applications/not-a-uuid';
+    const headers = signAdminRequest(adminKeypair, 'GET', url);
+
+    const response = await app.inject({ method: 'GET', url, headers });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json().error).toBe('invalid_request');
+
+    await app.close();
+  });
+
+  it('returns 404 for a non-existent application id', async () => {
+    const app = buildServer();
+    const url = '/ngo-applications/00000000-0000-0000-0000-000000000000';
+    const headers = signAdminRequest(adminKeypair, 'GET', url);
+
+    const response = await app.inject({ method: 'GET', url, headers });
+
+    expect(response.statusCode).toBe(404);
+    expect(response.json().error).toBe('not_found');
+
+    await app.close();
+  });
+
   it('approves a pending application', async () => {
     const app = buildServer();
 
