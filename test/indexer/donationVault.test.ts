@@ -99,7 +99,7 @@ describe('handleDonationVaultEvent', () => {
     expect(stream?.status).toBe('CANCELLED');
   });
 
-  it('ignores topup/ratemod events rather than corrupting balance (documented gap)', async () => {
+  it('ignores a topup event rather than corrupting balance (documented gap)', async () => {
     const donorRow = await prisma.donor.create({ data: { address: fakeAddress('J') } });
     const ngoRow = await prisma.ngo.create({
       data: { ownerAddress: fakeAddress('K'), name: 'NGO K' },
@@ -120,5 +120,36 @@ describe('handleDonationVaultEvent', () => {
 
     const stream = await prisma.stream.findUnique({ where: { onChainId: 4n } });
     expect(stream?.balance).toBe('1000'); // unchanged — see the handler's comment
+  });
+
+  it('leaves a stream untouched on a ratemod event (documented gap)', async () => {
+    const donorRow = await prisma.donor.create({ data: { address: fakeAddress('M') } });
+    const ngoRow = await prisma.ngo.create({
+      data: { ownerAddress: fakeAddress('N'), name: 'NGO N' },
+    });
+    await prisma.stream.create({
+      data: {
+        onChainId: 5n,
+        donorId: donorRow.id,
+        ngoId: ngoRow.id,
+        tokenAddress: fakeAddress('O'),
+        rate: '10',
+        balance: '1000',
+        withdrawn: '300',
+        status: 'ACTIVE',
+      },
+    });
+
+    // ratemod carries the stream's new rate. 25 is deliberately different
+    // from the stored 10, so if the handler ever starts applying it the
+    // assertions below fail instead of passing by coincidence. Unlike a
+    // fresh stream, this one already has `withdrawn` accrued — that field
+    // isn't in the payload either, so it must survive the event verbatim.
+    await handleDonationVaultEvent(makeEvent([symbolScVal('ratemod'), u64ScVal(5n)], i128ScVal(25n)));
+
+    const stream = await prisma.stream.findUnique({ where: { onChainId: 5n } });
+    expect(stream?.rate).toBe('10');
+    expect(stream?.balance).toBe('1000');
+    expect(stream?.withdrawn).toBe('300');
   });
 });
