@@ -75,6 +75,23 @@ describe('GET /streams', () => {
     await app.close();
   });
 
+  it('rejects a malformed cursor with 400 invalid_request', async () => {
+    const app = buildServer();
+
+    // A cursor is one of our stream UUIDs. Without the schema's uuid check
+    // this isn't rejected at all: the raw string reaches Prisma as
+    // `cursor: { id: 'not-a-uuid' }` and the request comes back 200, so a
+    // client's typo would silently return a page instead of an error.
+    // Asserting the error body (not just the status) pins the response to
+    // the schema rejection, not to whatever the query happens to return.
+    const response = await app.inject({ method: 'GET', url: '/streams?cursor=not-a-uuid' });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json().error).toBe('invalid_request');
+
+    await app.close();
+  });
+
   it('pages through results with a filter applied', async () => {
     const app = buildServer();
 
