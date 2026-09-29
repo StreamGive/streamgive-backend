@@ -3,8 +3,9 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import { prisma } from '../../src/db.js';
 import { handleDonationVaultEvent } from '../../src/indexer/handlers/donationVault.js';
+import { handleNgoRegistryEvent } from '../../src/indexer/handlers/ngoRegistry.js';
 import { fakeAddress, resetDb } from '../helpers/db.js';
-import { addressScVal, i128ScVal, makeEvent, symbolScVal, u64ScVal } from '../helpers/events.js';
+import { addressScVal, i128ScVal, makeEvent, stringScVal, symbolScVal, u64ScVal } from '../helpers/events.js';
 
 describe('handleDonationVaultEvent', () => {
   afterEach(async () => {
@@ -43,6 +44,37 @@ describe('handleDonationVaultEvent', () => {
     // Never went through ngo-registry — placeholder, unverified.
     const ngoRow = await prisma.ngo.findUnique({ where: { ownerAddress: ngo } });
     expect(ngoRow?.verified).toBe(false);
+  });
+
+  it('preserves a registered and verified NGO name on a created event', async () => {
+    const donor = fakeAddress('M');
+    const ngo = fakeAddress('N');
+    const token = fakeAddress('O');
+    const registeredName = 'Doctors Without Borders';
+
+    await handleNgoRegistryEvent(
+      makeEvent([symbolScVal('register'), addressScVal(ngo)], stringScVal(registeredName)),
+    );
+    await handleNgoRegistryEvent(
+      makeEvent([symbolScVal('approved'), addressScVal(ngo)], stringScVal('')),
+    );
+
+    await handleDonationVaultEvent(
+      makeEvent(
+        [symbolScVal('created'), u64ScVal(5n)],
+        xdr.ScVal.scvVec([
+          addressScVal(donor),
+          addressScVal(ngo),
+          addressScVal(token),
+          i128ScVal(1000n),
+          i128ScVal(10n),
+        ]),
+      ),
+    );
+
+    const ngoRow = await prisma.ngo.findUnique({ where: { ownerAddress: ngo } });
+    expect(ngoRow?.name).toBe(registeredName);
+    expect(ngoRow?.verified).toBe(true);
   });
 
   it('applies a withdraw event as a balance/withdrawn delta', async () => {
