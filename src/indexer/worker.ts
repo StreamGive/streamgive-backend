@@ -26,7 +26,15 @@ function isLedgerOutOfRange(err: unknown): boolean {
   );
 }
 
-async function pollOnce(handleEvent: EventHandler): Promise<void> {
+/**
+ * Runs a single polling pass.
+ *
+ * Exported for tests: production only ever reaches it through
+ * {@link startIndexer}'s interval, but its "no contract ids configured"
+ * guard is a real branch (and the one that keeps a fresh, unconfigured
+ * deployment from hitting the RPC) worth asserting on directly.
+ */
+export async function pollOnce(handleEvent: EventHandler): Promise<void> {
   if (WATCHED_CONTRACT_IDS.length === 0) {
     return;
   }
