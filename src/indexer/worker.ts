@@ -1,5 +1,4 @@
 
-import { PrismaClient } from '@prisma/client';
 import { getLatestLedgerSequence, rpcServer } from '../stellar/rpc.js';
 import { getCheckpoint, saveCheckpoint } from './checkpoint.js';
 import { WATCHED_CONTRACT_IDS } from './contracts.js';
@@ -8,6 +7,16 @@ const POLL_INTERVAL_MS = Number(process.env.INDEXER_POLL_INTERVAL_MS ?? 5000);
 const START_LEDGER = process.env.INDEXER_START_LEDGER
   ? Number(process.env.INDEXER_START_LEDGER)
   : undefined;
+const MAX_EVENTS_PER_POLL = process.env.INDEXER_MAX_EVENTS_PER_POLL
+  ? Number(process.env.INDEXER_MAX_EVENTS_PER_POLL)
+  : undefined;
+
+if (
+  MAX_EVENTS_PER_POLL !== undefined &&
+  (!Number.isInteger(MAX_EVENTS_PER_POLL) || MAX_EVENTS_PER_POLL < 1)
+) {
+  throw new Error('INDEXER_MAX_EVENTS_PER_POLL must be a positive integer');
+}
 
 type GetEventsResult = Awaited<ReturnType<typeof rpcServer.getEvents>>;
 export type ContractEvent = GetEventsResult['events'][number];
@@ -17,6 +26,7 @@ export type EventHandler = (event: ContractEvent) => Promise<void>;
 // the DB just to read the starting point; the source of truth is always
 // the `indexer_checkpoints` row, written after every processed event.
 let lastProcessedLedger: number | undefined;
+let lastProcessedEventId: string | undefined;
 
 /** The RPC rejects an out-of-window startLedger with JSON-RPC -32600 and a
  *  message naming the range it does serve. There is no dedicated error code
@@ -42,7 +52,8 @@ async function pollOnce(handleEvent: EventHandler): Promise<void> {
     const saved = await getCheckpoint();
 
     if (saved !== undefined) {
-      lastProcessedLedger = saved;
+      lastProcessedLedger = saved.lastLedger;
+      lastProcessedEventId = saved.lastEventId;
     } else {
       // Never run before: use INDEXER_START_LEDGER for backfill if set,
       // otherwise start from "now" to avoid replaying all history.
@@ -63,21 +74,27 @@ async function pollOnce(handleEvent: EventHandler): Promise<void> {
   //     never recovers. Events in the gap are lost, so say so loudly.
   const latestLedger = await getLatestLedgerSequence();
 
-  if (lastProcessedLedger >= latestLedger) {
+  if (lastProcessedLedger >= latestLedger && lastProcessedEventId === undefined) {
     return;
   }
 
   let events;
 
   try {
+    const filters = [
+      {
+        type: 'contract' as const,
+        contractIds: WATCHED_CONTRACT_IDS,
+      },
+    ];
+    const pagination = lastProcessedEventId
+      ? { cursor: lastProcessedEventId }
+      : { startLedger: lastProcessedLedger + 1 };
+
     ({ events } = await rpcServer.getEvents({
-      startLedger: lastProcessedLedger + 1,
-      filters: [
-        {
-          type: 'contract',
-          contractIds: WATCHED_CONTRACT_IDS,
-        },
-      ],
+      ...pagination,
+      filters,
+      limit: MAX_EVENTS_PER_POLL,
     }));
   } catch (err: unknown) {
     if (isLedgerOutOfRange(err)) {
@@ -88,6 +105,7 @@ async function pollOnce(handleEvent: EventHandler): Promise<void> {
       );
 
       lastProcessedLedger = latestLedger;
+      lastProcessedEventId = undefined;
       await saveCheckpoint(lastProcessedLedger);
       return;
     }
@@ -101,7 +119,7 @@ async function pollOnce(handleEvent: EventHandler): Promise<void> {
   // window and the recovery above fires on a perfectly healthy indexer.
   if (events.length === 0) {
     lastProcessedLedger = latestLedger;
-    await saveCheckpoint(lastProcessedLedger);
+    await saveCheckpoint(lastProcessedLedger, lastProcessedEventId ?? null);
     return;
   }
 
@@ -113,7 +131,8 @@ async function pollOnce(handleEvent: EventHandler): Promise<void> {
     // event after a crash would double-count it. Checkpointing after each
     // one bounds the damage to "at most the in-flight event" on a crash.
     lastProcessedLedger = event.ledger;
-    await saveCheckpoint(lastProcessedLedger);
+    lastProcessedEventId = event.id;
+    await saveCheckpoint(lastProcessedLedger, lastProcessedEventId);
   }
 }
 
@@ -140,59 +159,17 @@ export function startIndexer(handleEvent: EventHandler): () => Promise<void> {
       console.error('indexer poll failed', err);
     });
 
-  return () => clearInterval(interval);
-}
+    inFlightPolls.add(pollPromise);
 
-
-
-export class EventWorker {
-  constructor(private prisma: PrismaClient) {}
-
-  async processEvent(event: { id: string; type: string; data: any }, currentBlock: number) {
-    // Execute event handling and checkpoint save atomically using prisma.$transaction
-    await this.prisma.$transaction(async (tx) => {
-      // 1. Optional: Check if event was already processed (idempotency guard)
-      // const existing = await tx.processedEvent.findUnique({ where: { id: event.id } });
-      // if (existing) return;
-
-      // 2. Run handler with transaction client
-      if (event.type === 'WITHDRAW') {
-        await this.handleWithdraw(tx, event.data);
-      } else {
-        // Handle other event types with tx
-      }
-
-      // 3. Save checkpoint within the same transaction
-      await tx.checkpoint.upsert({
-        where: { id: 'singleton' },
-        update: { lastBlock: currentBlock },
-        create: { id: 'singleton', lastBlock: currentBlock },
-      });
-
-      // 4. Mark event as processed (if using processed events table)
-      // await tx.processedEvent.create({ data: { id: event.id } });
+    void pollPromise.then(() => {
+      inFlightPolls.delete(pollPromise);
     });
-  }
+  };
 
-  private async handleWithdraw(tx: any, data: { userId: string; amount: number }) {
-    // Apply balance update using transaction client
-    await tx.userBalance.update({
-      where: { userId: data.userId },
-      decrement: { balance: data.amount },
-    });
-  }
+  const interval = setInterval(runPoll, POLL_INTERVAL_MS);
+
+  return async (): Promise<void> => {
+    clearInterval(interval);
+    await Promise.all(inFlightPolls);
+  };
 }
-
-// Inside event processing / transaction logic
-await tx.indexerCheckpoint.upsert({
-  where: { id: 'singleton' },
-  update: {
-    lastLedger: event.ledger,
-    lastEventId: event.id, // Save event ID for intra-ledger resumption
-  },
-  create: {
-    id: 'singleton',
-    lastLedger: event.ledger,
-    lastEventId: event.id,
-  },
-});
