@@ -3,6 +3,7 @@ import rateLimit from '@fastify/rate-limit';
 import Fastify from 'fastify';
 
 import { prisma } from './db.js';
+import { recordHttpRequest, renderMetrics } from './metrics.js';
 import { impactRoutes } from './routes/impact.js';
 import { ngoApplicationRoutes } from './routes/ngoApplications.js';
 import { ngoRoutes } from './routes/ngos.js';
@@ -15,6 +16,7 @@ import { streamRoutes } from './routes/streams.js';
 const USE_PRETTY_LOGS = !['production', 'test'].includes(process.env.NODE_ENV ?? '');
 
 export function buildServer() {
+  const requestStartedAt = new WeakMap<object, bigint>();
   const app = Fastify({
     logger: {
       level: process.env.LOG_LEVEL ?? 'info',
@@ -62,6 +64,26 @@ export function buildServer() {
   app.register(rateLimit, {
     max: Number(process.env.RATE_LIMIT_MAX ?? 100),
     timeWindow: process.env.RATE_LIMIT_WINDOW ?? '1 minute',
+  });
+
+  app.addHook('onRequest', async (request) => {
+    requestStartedAt.set(request, process.hrtime.bigint());
+  });
+
+  app.addHook('onResponse', async (request, reply) => {
+    const startedAt = requestStartedAt.get(request);
+    if (startedAt === undefined) return;
+    const durationSeconds = Number(process.hrtime.bigint() - startedAt) / 1_000_000_000;
+    recordHttpRequest(
+      request.method,
+      request.routeOptions.url ?? 'unmatched',
+      reply.statusCode,
+      durationSeconds,
+    );
+  });
+
+  app.get('/metrics', async (_request, reply) => {
+    return reply.type('text/plain; version=0.0.4; charset=utf-8').send(renderMetrics());
   });
 
   app.get('/health', async () => {
