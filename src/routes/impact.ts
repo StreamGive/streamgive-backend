@@ -24,14 +24,17 @@ export async function impactRoutes(app: FastifyInstance): Promise<void> {
     // delivered to any NGO, so only count withdrawn.  Active streams count
     // balance + withdrawn (balance will be withdrawn in the future).
     const totalCommitted = streams.reduce(
-      (sum, s) =>
+      (sum: bigint, s: { balance: string; withdrawn: string; status: string }) =>
         s.status === 'CANCELLED'
           ? sum + BigInt(s.withdrawn)
           : sum + BigInt(s.balance) + BigInt(s.withdrawn),
       0n,
     );
-    const totalWithdrawn = streams.reduce((sum, s) => sum + BigInt(s.withdrawn), 0n);
-    const activeStreams = streams.filter((s) => s.status === 'ACTIVE').length;
+    const totalWithdrawn = streams.reduce(
+      (sum: bigint, s: { withdrawn: string }) => sum + BigInt(s.withdrawn),
+      0n,
+    );
+    const activeStreams = streams.filter((s: { status: string }) => s.status === 'ACTIVE').length;
 
     return {
       totalCommitted: totalCommitted.toString(),
@@ -62,13 +65,16 @@ export async function impactRoutes(app: FastifyInstance): Promise<void> {
     // For cancelled streams the balance was refunded to the donor, so only
     // count withdrawn.  Active streams count balance + withdrawn.
     const ngoCommitted = ngo.streams.reduce(
-      (sum, s) =>
+      (sum: bigint, s: { balance: string; withdrawn: string; status: string }) =>
         s.status === 'CANCELLED'
           ? sum + BigInt(s.withdrawn)
           : sum + BigInt(s.balance) + BigInt(s.withdrawn),
       0n,
     );
-    const ngoWithdrawn = ngo.streams.reduce((sum, s) => sum + BigInt(s.withdrawn), 0n);
+    const ngoWithdrawn = ngo.streams.reduce(
+      (sum: bigint, s: { withdrawn: string }) => sum + BigInt(s.withdrawn),
+      0n,
+    );
 
     // Scans every stream on the platform — fine at MVP scale, but this is
     // the first thing to replace with a maintained running total if the
@@ -77,7 +83,7 @@ export async function impactRoutes(app: FastifyInstance): Promise<void> {
       select: { balance: true, withdrawn: true, status: true },
     });
     const platformCommitted = allStreams.reduce(
-      (sum, s) =>
+      (sum: bigint, s: { balance: string; withdrawn: string; status: string }) =>
         s.status === 'CANCELLED'
           ? sum + BigInt(s.withdrawn)
           : sum + BigInt(s.balance) + BigInt(s.withdrawn),
@@ -92,9 +98,9 @@ export async function impactRoutes(app: FastifyInstance): Promise<void> {
       name: ngo.name,
       totalCommitted: ngoCommitted.toString(),
       totalWithdrawn: ngoWithdrawn.toString(),
-      activeStreams: ngo.streams.filter((s) => s.status === 'ACTIVE').length,
-      cancelledStreams: ngo.streams.filter((s) => s.status === 'CANCELLED').length,
-      uniqueDonors: new Set(ngo.streams.map((s) => s.donorId)).size,
+      activeStreams: ngo.streams.filter((s: { status: string }) => s.status === 'ACTIVE').length,
+      cancelledStreams: ngo.streams.filter((s: { status: string }) => s.status === 'CANCELLED').length,
+      uniqueDonors: new Set(ngo.streams.map((s: { donorId: string }) => s.donorId)).size,
       platformSharePercent,
     };
   });

@@ -31,7 +31,9 @@ const stopIndexer = startIndexer(dispatchEvent);
 
 async function shutdown(signal: NodeJS.Signals): Promise<void> {
   app.log.info({ signal }, 'shutting down');
-  stopIndexer();
+  // Awaited so the in-flight poll finishes (and its checkpoint is written)
+  // before the pool closes underneath it.
+  await stopIndexer();
   try {
     await app.close();
     process.exit(0);

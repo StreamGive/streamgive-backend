@@ -1,12 +1,10 @@
-
-import { PrismaClient } from '@prisma/client';
 import { getLatestLedgerSequence, rpcServer } from '../stellar/rpc.js';
 import { getCheckpoint, saveCheckpoint } from './checkpoint.js';
 import { WATCHED_CONTRACT_IDS } from './contracts.js';
 
 const POLL_INTERVAL_MS = Number(process.env.INDEXER_POLL_INTERVAL_MS ?? 5000);
 const START_LEDGER = process.env.INDEXER_START_LEDGER
-  ? Number(process.env.INDEXER_START_LEDGER)
+  ? BigInt(process.env.INDEXER_START_LEDGER)
   : undefined;
 
 type GetEventsResult = Awaited<ReturnType<typeof rpcServer.getEvents>>;
@@ -16,7 +14,7 @@ export type EventHandler = (event: ContractEvent) => Promise<void>;
 // Cached in memory during the process lifetime so every poll doesn't hit
 // the DB just to read the starting point; the source of truth is always
 // the `indexer_checkpoints` row, written after every processed event.
-let lastProcessedLedger: number | undefined;
+let lastProcessedLedger: bigint | undefined;
 
 /** The RPC rejects an out-of-window startLedger with JSON-RPC -32600 and a
  *  message naming the range it does serve. There is no dedicated error code
@@ -46,7 +44,7 @@ async function pollOnce(handleEvent: EventHandler): Promise<void> {
     } else {
       // Never run before: use INDEXER_START_LEDGER for backfill if set,
       // otherwise start from "now" to avoid replaying all history.
-      lastProcessedLedger = START_LEDGER ?? (await getLatestLedgerSequence());
+      lastProcessedLedger = START_LEDGER ?? BigInt(await getLatestLedgerSequence());
       await saveCheckpoint(lastProcessedLedger);
       return;
     }
@@ -61,7 +59,7 @@ async function pollOnce(handleEvent: EventHandler): Promise<void> {
   //     saved checkpoint ages out of it and every later poll fails forever.
   //     Skip ahead to the current ledger; the alternative is an indexer that
   //     never recovers. Events in the gap are lost, so say so loudly.
-  const latestLedger = await getLatestLedgerSequence();
+  const latestLedger = BigInt(await getLatestLedgerSequence());
 
   if (lastProcessedLedger >= latestLedger) {
     return;
@@ -71,7 +69,7 @@ async function pollOnce(handleEvent: EventHandler): Promise<void> {
 
   try {
     ({ events } = await rpcServer.getEvents({
-      startLedger: lastProcessedLedger + 1,
+      startLedger: Number(lastProcessedLedger + 1n),
       filters: [
         {
           type: 'contract',
@@ -112,8 +110,8 @@ async function pollOnce(handleEvent: EventHandler): Promise<void> {
     // deltas (balance -= accrued, etc.), so replaying an already-applied
     // event after a crash would double-count it. Checkpointing after each
     // one bounds the damage to "at most the in-flight event" on a crash.
-    lastProcessedLedger = event.ledger;
-    await saveCheckpoint(lastProcessedLedger);
+    lastProcessedLedger = BigInt(event.ledger);
+    await saveCheckpoint(lastProcessedLedger, event.id);
   }
 }
 
@@ -139,60 +137,15 @@ export function startIndexer(handleEvent: EventHandler): () => Promise<void> {
     const pollPromise = pollOnce(handleEvent).catch((err: unknown) => {
       console.error('indexer poll failed', err);
     });
+    inFlightPolls.add(pollPromise);
+    pollPromise.finally(() => inFlightPolls.delete(pollPromise));
+  };
 
-  return () => clearInterval(interval);
+  const interval = setInterval(runPoll, POLL_INTERVAL_MS);
+  runPoll();
+
+  return async () => {
+    clearInterval(interval);
+    await Promise.all(inFlightPolls);
+  };
 }
-
-
-
-export class EventWorker {
-  constructor(private prisma: PrismaClient) {}
-
-  async processEvent(event: { id: string; type: string; data: any }, currentBlock: number) {
-    // Execute event handling and checkpoint save atomically using prisma.$transaction
-    await this.prisma.$transaction(async (tx) => {
-      // 1. Optional: Check if event was already processed (idempotency guard)
-      // const existing = await tx.processedEvent.findUnique({ where: { id: event.id } });
-      // if (existing) return;
-
-      // 2. Run handler with transaction client
-      if (event.type === 'WITHDRAW') {
-        await this.handleWithdraw(tx, event.data);
-      } else {
-        // Handle other event types with tx
-      }
-
-      // 3. Save checkpoint within the same transaction
-      await tx.checkpoint.upsert({
-        where: { id: 'singleton' },
-        update: { lastBlock: currentBlock },
-        create: { id: 'singleton', lastBlock: currentBlock },
-      });
-
-      // 4. Mark event as processed (if using processed events table)
-      // await tx.processedEvent.create({ data: { id: event.id } });
-    });
-  }
-
-  private async handleWithdraw(tx: any, data: { userId: string; amount: number }) {
-    // Apply balance update using transaction client
-    await tx.userBalance.update({
-      where: { userId: data.userId },
-      decrement: { balance: data.amount },
-    });
-  }
-}
-
-// Inside event processing / transaction logic
-await tx.indexerCheckpoint.upsert({
-  where: { id: 'singleton' },
-  update: {
-    lastLedger: event.ledger,
-    lastEventId: event.id, // Save event ID for intra-ledger resumption
-  },
-  create: {
-    id: 'singleton',
-    lastLedger: event.ledger,
-    lastEventId: event.id,
-  },
-});

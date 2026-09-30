@@ -25,12 +25,17 @@ export function buildServer() {
     },
   });
 
-  app.setErrorHandler((error, request, reply) => {
+  app.setErrorHandler((error: unknown, request, reply) => {
     request.log.error(error);
+    // Only a status Fastify itself attached is trustworthy; anything else
+    // (a driver error, a bug) is a 500 and must not leak its own `statusCode`
+    // field into the response.
+    const candidate =
+      typeof error === 'object' && error !== null && 'statusCode' in error
+        ? (error as { statusCode?: unknown }).statusCode
+        : undefined;
     const statusCode =
-      error.statusCode && error.statusCode >= 400 && error.statusCode < 600
-        ? error.statusCode
-        : 500;
+      typeof candidate === 'number' && candidate >= 400 && candidate < 600 ? candidate : 500;
     const errorString =
       statusCode === 404
         ? 'not_found'

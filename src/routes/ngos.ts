@@ -52,13 +52,16 @@ async function findNgoDetail(where: { id: string } | { ownerAddress: string }) {
   // ever delivered to the NGO.  Counting balance on a cancelled stream would
   // overstate totalCommitted by the refunded amount.
   const totalCommitted = streams.reduce(
-    (sum, s) =>
+    (sum: bigint, s: { balance: string; withdrawn: string; status: string }) =>
       s.status === 'CANCELLED'
         ? sum + BigInt(s.withdrawn)
         : sum + BigInt(s.balance) + BigInt(s.withdrawn),
     0n,
   );
-  const totalWithdrawn = streams.reduce((sum, s) => sum + BigInt(s.withdrawn), 0n);
+  const totalWithdrawn = streams.reduce(
+    (sum: bigint, s: { withdrawn: string }) => sum + BigInt(s.withdrawn),
+    0n,
+  );
 
   return {
     ...profile,
@@ -70,8 +73,8 @@ async function findNgoDetail(where: { id: string } | { ownerAddress: string }) {
     stats: {
       totalCommitted: totalCommitted.toString(),
       totalWithdrawn: totalWithdrawn.toString(),
-      activeStreamCount: streams.filter((s) => s.status === 'ACTIVE').length,
-      donorCount: new Set(streams.map((s) => s.donorId)).size,
+      activeStreamCount: streams.filter((s: { status: string }) => s.status === 'ACTIVE').length,
+      donorCount: new Set(streams.map((s: { donorId: string }) => s.donorId)).size,
     },
   };
 }

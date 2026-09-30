@@ -2,6 +2,12 @@
 FROM node:22-slim AS build
 WORKDIR /app
 
+# Placeholder only — prisma generate never connects to the database, but
+# prisma.config.ts calls env('DATABASE_URL') which throws when unset.
+# Overridable at build-time with --build-arg if preferred.
+ARG DATABASE_URL=postgresql://placeholder:placeholder@localhost:5432/placeholder
+ENV DATABASE_URL=${DATABASE_URL}
+
 # Copied separately from the rest of the source so `npm ci` — and its
 # postinstall `prisma generate`, which needs the schema — is cached across
 # builds unless dependencies or the schema actually change.

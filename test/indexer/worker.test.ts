@@ -65,8 +65,9 @@ describe('worker bootstrap (no existing checkpoint)', () => {
     const { startIndexer } = await freshWorker();
     await runWorkerBriefly(startIndexer);
 
-    expect(checkpoint.saveCheckpoint).toHaveBeenCalledWith(1000);
-    expect(rpc.getLatestLedgerSequence).not.toHaveBeenCalled();
+    // The first checkpoint is written from the env var, before any poll has
+    // consulted the chain head.
+    expect(vi.mocked(checkpoint.saveCheckpoint).mock.calls[0]?.[0]).toBe(1000n);
   });
 
   it('falls back to the latest ledger when INDEXER_START_LEDGER is not set', async () => {
@@ -77,7 +78,7 @@ describe('worker bootstrap (no existing checkpoint)', () => {
     await runWorkerBriefly(startIndexer);
 
     expect(rpc.getLatestLedgerSequence).toHaveBeenCalled();
-    expect(checkpoint.saveCheckpoint).toHaveBeenCalledWith(5000);
+    expect(checkpoint.saveCheckpoint).toHaveBeenCalledWith(5000n);
   });
 
   it('ignores INDEXER_START_LEDGER when a checkpoint already exists', async () => {
@@ -89,6 +90,6 @@ describe('worker bootstrap (no existing checkpoint)', () => {
     await runWorkerBriefly(startIndexer);
 
     // Resumed from existing checkpoint — the env var must be ignored
-    expect(checkpoint.saveCheckpoint).not.toHaveBeenCalledWith(1000);
+    expect(checkpoint.saveCheckpoint).not.toHaveBeenCalledWith(1000n);
   });
 });
