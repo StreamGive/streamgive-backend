@@ -75,6 +75,59 @@ describe('GET /streams', () => {
     await app.close();
   });
 
+  it('filters by created-date range combined with donor', async () => {
+    const app = buildServer();
+
+    const donor = await prisma.donor.create({ data: { address: fakeAddress('A') } });
+    const otherDonor = await prisma.donor.create({ data: { address: fakeAddress('B') } });
+    const ngo = await prisma.ngo.create({
+      data: { ownerAddress: fakeAddress('C'), name: 'NGO', verified: true },
+    });
+    const createdAfter = new Date('2025-03-01T00:00:00.000Z');
+    const createdBefore = new Date('2025-03-31T23:59:59.999Z');
+
+    for (const stream of [
+      { onChainId: 1n, donorId: donor.id, createdAt: new Date('2025-02-28T23:59:59.999Z') },
+      { onChainId: 2n, donorId: donor.id, createdAt: createdAfter },
+      { onChainId: 3n, donorId: donor.id, createdAt: new Date('2025-04-01T00:00:00.000Z') },
+      { onChainId: 4n, donorId: otherDonor.id, createdAt: new Date('2025-03-15T12:00:00.000Z') },
+    ]) {
+      await prisma.stream.create({
+        data: {
+          ...stream,
+          ngoId: ngo.id,
+          tokenAddress: fakeAddress('D'),
+          rate: '1',
+          balance: '100',
+          withdrawn: '0',
+        },
+      });
+    }
+
+    const response = await app.inject({
+      method: 'GET',
+      url: `/streams?donor=${donor.address}&createdAfter=${createdAfter.toISOString()}&createdBefore=${createdBefore.toISOString()}`,
+    });
+    expect(response.statusCode).toBe(200);
+
+    const body = response.json();
+    expect(body.streams.map((stream: { onChainId: string }) => stream.onChainId)).toEqual(['2']);
+
+    await app.close();
+  });
+
+  it('400s on a malformed created-date bound', async () => {
+    const app = buildServer();
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/streams?createdAfter=not-a-date',
+    });
+    expect(response.statusCode).toBe(400);
+
+    await app.close();
+  });
+
   it('pages through results with a filter applied', async () => {
     const app = buildServer();
 
