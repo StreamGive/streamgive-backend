@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import { prisma } from '../../src/db.js';
 import { buildServer } from '../../src/server.js';
-import { fakeAddress, resetDb } from '../helpers/db.js';
+import { fakeAddress, fakeContractAddress, resetDb } from '../helpers/db.js';
 
 describe('GET /streams', () => {
   afterEach(async () => {
@@ -72,6 +72,57 @@ describe('GET /streams', () => {
     const response = await app.inject({ method: 'GET', url: '/streams?ngo=not-a-uuid' });
     expect(response.statusCode).toBe(400);
 
+    await app.close();
+  });
+
+  it('filters by token contract address', async () => {
+    const app = buildServer();
+
+    const donor = await prisma.donor.create({ data: { address: fakeAddress('A') } });
+    const ngo = await prisma.ngo.create({
+      data: { ownerAddress: fakeAddress('B'), name: 'NGO', verified: true },
+    });
+    const targetToken = fakeContractAddress('C');
+
+    await prisma.stream.createMany({
+      data: [
+        {
+          onChainId: 1n,
+          donorId: donor.id,
+          ngoId: ngo.id,
+          tokenAddress: targetToken,
+          rate: '1',
+          balance: '100',
+          withdrawn: '0',
+        },
+        {
+          onChainId: 2n,
+          donorId: donor.id,
+          ngoId: ngo.id,
+          tokenAddress: fakeContractAddress('D'),
+          rate: '1',
+          balance: '200',
+          withdrawn: '0',
+        },
+      ],
+    });
+
+    const response = await app.inject({ method: 'GET', url: `/streams?token=${targetToken}` });
+
+    expect(response.statusCode).toBe(200);
+    expect(
+      response.json().streams.map((stream: { onChainId: string }) => stream.onChainId),
+    ).toEqual(['1']);
+
+    await app.close();
+  });
+
+  it('400s on a malformed token contract address', async () => {
+    const app = buildServer();
+
+    const response = await app.inject({ method: 'GET', url: '/streams?token=not-a-contract' });
+
+    expect(response.statusCode).toBe(400);
     await app.close();
   });
 
