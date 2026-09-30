@@ -1,5 +1,6 @@
 
 import { PrismaClient } from '@prisma/client';
+import { recordIndexerPosition } from '../metrics.js';
 import { getLatestLedgerSequence, rpcServer } from '../stellar/rpc.js';
 import { getCheckpoint, saveCheckpoint } from './checkpoint.js';
 import { WATCHED_CONTRACT_IDS } from './contracts.js';
@@ -48,6 +49,7 @@ async function pollOnce(handleEvent: EventHandler): Promise<void> {
       // otherwise start from "now" to avoid replaying all history.
       lastProcessedLedger = START_LEDGER ?? (await getLatestLedgerSequence());
       await saveCheckpoint(lastProcessedLedger);
+      recordIndexerPosition(lastProcessedLedger, lastProcessedLedger);
       return;
     }
   }
@@ -62,6 +64,7 @@ async function pollOnce(handleEvent: EventHandler): Promise<void> {
   //     Skip ahead to the current ledger; the alternative is an indexer that
   //     never recovers. Events in the gap are lost, so say so loudly.
   const latestLedger = await getLatestLedgerSequence();
+  recordIndexerPosition(lastProcessedLedger, latestLedger);
 
   if (lastProcessedLedger >= latestLedger) {
     return;

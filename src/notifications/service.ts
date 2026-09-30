@@ -1,4 +1,5 @@
 import type { NotificationEvent } from './types.js';
+import { recordNotificationDelivery } from '../metrics.js';
 
 /** Real (if NOTIFY_WEBHOOK_URL is set): POSTs the event as JSON. Node's
  * built-in fetch means this needs no extra dependency. */
@@ -7,18 +8,18 @@ async function notifyWebhook(event: NotificationEvent): Promise<void> {
   if (!webhookUrl) return;
 
   try {
-    await fetch(webhookUrl, {
+    const res = await fetch(webhookUrl, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(event),
     });
 
     if (!res.ok) {
-      console.error(
-        `webhook notification failed with status ${res.status} for ${webhookUrl}`,
-      );
-    }
+      recordNotificationDelivery('failure');
+      console.error(`webhook notification failed with status ${res.status} for ${webhookUrl}`);
+    } else recordNotificationDelivery('success');
   } catch (err) {
+    recordNotificationDelivery('failure');
     console.error('webhook notification failed', err);
   }
 }

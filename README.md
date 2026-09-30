@@ -69,11 +69,20 @@ ledger, not from the contract's history).
 until it's configured — set it to the Stellar public key (`G...`) that
 matches the `admin` configured on the deployed contracts. See
 [ENVIRONMENT.md](./ENVIRONMENT.md).
+
 ## Indexer
 
 See [docs/INDEXER.md](./docs/INDEXER.md) for a full table of which on-chain
 events the indexer handles, which tables each one writes, and how the
 checkpoint and out-of-window recovery work.
+
+## Prometheus metrics
+
+`GET /metrics` returns Prometheus text format (`text/plain; version=0.0.4`).
+The endpoint exposes HTTP request totals and duration, the indexer's last
+checkpoint, latest observed ledger and lag, plus webhook notification delivery
+success/failure totals. Configure Prometheus to scrape the endpoint on the same
+host and port as the API; it does not require database access to respond.
 
 ## Notification events
 
@@ -183,7 +192,6 @@ Early development.
 
 Apache-2.0 — see [LICENSE](./LICENSE).
 
-
 ## Local development
 
 ```bash
@@ -193,3 +201,4 @@ npm install
 npm run db:migrate              # apply Prisma migrations to streamgive
 npm run db:seed                 # optional: load sample NGOs, donors and streams
 npm run dev
+```
