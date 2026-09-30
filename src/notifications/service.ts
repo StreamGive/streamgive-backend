@@ -7,16 +7,14 @@ async function notifyWebhook(event: NotificationEvent): Promise<void> {
   if (!webhookUrl) return;
 
   try {
-    await fetch(webhookUrl, {
+    const res = await fetch(webhookUrl, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(event),
     });
 
     if (!res.ok) {
-      console.error(
-        `webhook notification failed with status ${res.status} for ${webhookUrl}`,
-      );
+      console.error(`webhook notification failed with status ${res.status} for ${webhookUrl}`);
     }
   } catch (err) {
     console.error('webhook notification failed', err);

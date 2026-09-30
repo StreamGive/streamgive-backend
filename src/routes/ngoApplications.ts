@@ -1,9 +1,9 @@
-import { Prisma } from '@prisma/client';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 
 import { prisma } from '../db.js';
 import { requireAdminSignature } from '../middleware/adminAuth.js';
+import { notify } from '../notifications/service.js';
 
 const applicationSchema = z.object({
   ownerAddress: z.string().regex(/^G[A-Z2-7]{55}$/),
@@ -25,9 +25,7 @@ const idParamSchema = z.object({ id: z.string().uuid() });
 const statusQuerySchema = z.object({
   // Stellar StrKey ed25519 public key: 'G' + 55 base32 (A-Z2-7) chars.
   // Same regex as GET /ngos/lookup.
-  ownerAddress: z
-    .string()
-    .regex(/^G[A-Z2-7]{55}$/),
+  ownerAddress: z.string().regex(/^G[A-Z2-7]{55}$/),
 });
 
 const reviewBodySchema = z.object({
@@ -50,9 +48,7 @@ export async function ngoApplicationRoutes(app: FastifyInstance): Promise<void> 
     async (request, reply) => {
       const parsed = applicationSchema.safeParse(request.body);
       if (!parsed.success) {
-        return reply
-          .code(400)
-          .send({ error: 'invalid_request', details: parsed.error.flatten() });
+        return reply.code(400).send({ error: 'invalid_request', details: parsed.error.flatten() });
       }
 
       const existingApp = await prisma.ngoApplication.findFirst({
@@ -69,6 +65,12 @@ export async function ngoApplicationRoutes(app: FastifyInstance): Promise<void> 
       }
 
       const application = await prisma.ngoApplication.create({ data: parsed.data });
+      await notify({
+        type: 'application_submitted',
+        applicationId: application.id,
+        ownerAddress: application.ownerAddress,
+        name: application.name,
+      });
       return reply.code(201).send(application);
     },
   );
@@ -152,25 +154,24 @@ export async function ngoApplicationRoutes(app: FastifyInstance): Promise<void> 
         return reply.code(400).send({ error: 'invalid_request', details: parsed.error.flatten() });
       }
 
-      try {
-        return await prisma.ngoApplication.update({
-          where: { id },
-          data: { status: 'APPROVED', reviewNote: parsed.data.reviewNote },
-        });
-      } catch (err) {
-        if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2025') {
-          return reply.code(404).send({ error: 'not_found' });
-        }
-        throw err;
-      }
+      const application = await prisma.ngoApplication.findUnique({ where: { id } });
+      if (!application) return reply.code(404).send({ error: 'not_found' });
       if (application.status !== 'PENDING') {
         return reply.code(409).send({ error: 'already_reviewed' });
       }
 
-      return await prisma.ngoApplication.update({
+      const reviewed = await prisma.ngoApplication.update({
         where: { id },
         data: { status: 'APPROVED', reviewNote: parsed.data.reviewNote },
       });
+      await notify({
+        type: 'application_reviewed',
+        applicationId: reviewed.id,
+        ownerAddress: reviewed.ownerAddress,
+        status: 'APPROVED',
+        ...(reviewed.reviewNote ? { reviewNote: reviewed.reviewNote } : {}),
+      });
+      return reviewed;
     },
   );
 
@@ -189,25 +190,24 @@ export async function ngoApplicationRoutes(app: FastifyInstance): Promise<void> 
         return reply.code(400).send({ error: 'invalid_request', details: parsed.error.flatten() });
       }
 
-      try {
-        return await prisma.ngoApplication.update({
-          where: { id },
-          data: { status: 'REJECTED', reviewNote: parsed.data.reviewNote },
-        });
-      } catch (err) {
-        if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2025') {
-          return reply.code(404).send({ error: 'not_found' });
-        }
-        throw err;
-      }
+      const application = await prisma.ngoApplication.findUnique({ where: { id } });
+      if (!application) return reply.code(404).send({ error: 'not_found' });
       if (application.status !== 'PENDING') {
         return reply.code(409).send({ error: 'already_reviewed' });
       }
 
-      return await prisma.ngoApplication.update({
+      const reviewed = await prisma.ngoApplication.update({
         where: { id },
         data: { status: 'REJECTED', reviewNote: parsed.data.reviewNote },
       });
+      await notify({
+        type: 'application_reviewed',
+        applicationId: reviewed.id,
+        ownerAddress: reviewed.ownerAddress,
+        status: 'REJECTED',
+        ...(reviewed.reviewNote ? { reviewNote: reviewed.reviewNote } : {}),
+      });
+      return reviewed;
     },
   );
 }

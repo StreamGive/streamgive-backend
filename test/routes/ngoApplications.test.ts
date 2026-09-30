@@ -1,10 +1,12 @@
 import { Keypair } from '@stellar/stellar-sdk';
-import { afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+
+vi.mock('../../src/notifications/service.js', () => ({ notify: vi.fn() }));
 
 import { prisma } from '../../src/db.js';
 import { buildServer } from '../../src/server.js';
 import { fakeAddress, resetDb } from '../helpers/db.js';
-import { sep53Hash } from '../../src/middleware/adminAuth.js';
+import { notify } from '../../src/notifications/service.js';
 import { signAdminRequest } from '../helpers/adminAuth.js';
 
 const adminKeypair = Keypair.random();
@@ -25,6 +27,7 @@ describe('POST /ngo-applications', () => {
   });
 
   afterEach(async () => {
+    vi.mocked(notify).mockClear();
     await resetDb();
   });
 
@@ -39,6 +42,12 @@ describe('POST /ngo-applications', () => {
 
     expect(response.statusCode).toBe(201);
     expect(response.json().status).toBe('PENDING');
+    expect(notify).toHaveBeenCalledWith({
+      type: 'application_submitted',
+      applicationId: response.json().id,
+      ownerAddress: response.json().ownerAddress,
+      name: response.json().name,
+    });
 
     await app.close();
   });
@@ -117,6 +126,7 @@ describe('POST /ngo-applications', () => {
 
 describe('GET /ngo-applications/status', () => {
   afterEach(async () => {
+    vi.mocked(notify).mockClear();
     await resetDb();
   });
 
@@ -192,6 +202,7 @@ describe('admin NGO application review', () => {
   });
 
   afterEach(async () => {
+    vi.mocked(notify).mockClear();
     await resetDb();
   });
 
@@ -227,6 +238,38 @@ describe('admin NGO application review', () => {
 
     const stored = await prisma.ngoApplication.findUnique({ where: { id: application.id } });
     expect(stored?.status).toBe('APPROVED');
+    expect(notify).toHaveBeenCalledWith({
+      type: 'application_reviewed',
+      applicationId: application.id,
+      ownerAddress: application.ownerAddress,
+      status: 'APPROVED',
+    });
+
+    await app.close();
+  });
+
+  it('notifies when a pending application is rejected', async () => {
+    const app = buildServer();
+    const application = await prisma.ngoApplication.create({ data: validApplicationPayload() });
+    const url = `/ngo-applications/${application.id}/reject`;
+    const headers = signAdminRequest(adminKeypair, 'POST', url);
+
+    const response = await app.inject({
+      method: 'POST',
+      url,
+      headers,
+      payload: { reviewNote: 'Insufficient documentation' },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().status).toBe('REJECTED');
+    expect(notify).toHaveBeenCalledWith({
+      type: 'application_reviewed',
+      applicationId: application.id,
+      ownerAddress: application.ownerAddress,
+      status: 'REJECTED',
+      reviewNote: 'Insufficient documentation',
+    });
 
     await app.close();
   });
