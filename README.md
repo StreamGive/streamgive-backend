@@ -75,6 +75,12 @@ See [docs/INDEXER.md](./docs/INDEXER.md) for a full table of which on-chain
 events the indexer handles, which tables each one writes, and how the
 checkpoint and out-of-window recovery work.
 
+## API statistics
+
+See [docs/STATS.md](./docs/STATS.md) for the definitions of NGO and platform
+amounts, stream counts, donor counts, cancellation handling, and
+`platformSharePercent`.
+
 ## Notification events
 
 When `NOTIFY_WEBHOOK_URL` is set, the indexer POSTs a JSON body to that URL
