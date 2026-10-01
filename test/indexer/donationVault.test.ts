@@ -1,5 +1,5 @@
 import { xdr } from '@stellar/stellar-sdk';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { prisma } from '../../src/db.js';
 import { handleDonationVaultEvent } from '../../src/indexer/handlers/donationVault.js';
@@ -7,7 +7,12 @@ import { fakeAddress, resetDb } from '../helpers/db.js';
 import { addressScVal, i128ScVal, makeEvent, symbolScVal, u64ScVal } from '../helpers/events.js';
 
 describe('handleDonationVaultEvent', () => {
+  const originalWebhookUrl = process.env.NOTIFY_WEBHOOK_URL;
+
   afterEach(async () => {
+    vi.restoreAllMocks();
+    if (originalWebhookUrl === undefined) delete process.env.NOTIFY_WEBHOOK_URL;
+    else process.env.NOTIFY_WEBHOOK_URL = originalWebhookUrl;
     await resetDb();
   });
 
@@ -58,6 +63,46 @@ describe('handleDonationVaultEvent', () => {
     });
   });
 
+  it('emits a stream_created notification for a created event', async () => {
+    const webhookUrl = 'https://example.com/streamgive-notifications';
+    process.env.NOTIFY_WEBHOOK_URL = webhookUrl;
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(new Response(null, { status: 200 }));
+
+    const donor = fakeAddress('N');
+    const ngo = fakeAddress('O');
+    const token = fakeAddress('P');
+    const event = makeEvent(
+      [symbolScVal('created'), u64ScVal(40n)],
+      xdr.ScVal.scvVec([
+        addressScVal(donor),
+        addressScVal(ngo),
+        addressScVal(token),
+        i128ScVal(1000n),
+        i128ScVal(10n),
+      ]),
+    );
+    event.id = 'created-notification-test';
+
+    await handleDonationVaultEvent(event);
+
+    const ngoRow = await prisma.ngo.findUnique({ where: { ownerAddress: ngo } });
+    expect(ngoRow).not.toBeNull();
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(fetchSpy).toHaveBeenCalledWith(webhookUrl, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        type: 'stream_created',
+        eventId: event.id,
+        streamId: '40',
+        donorAddress: donor,
+        ngoId: ngoRow?.id,
+      }),
+    });
+  });
+
   it('applies a withdraw event as a balance/withdrawn delta', async () => {
     const donorRow = await prisma.donor.create({ data: { address: fakeAddress('D') } });
     const ngoRow = await prisma.ngo.create({
@@ -75,7 +120,9 @@ describe('handleDonationVaultEvent', () => {
       },
     });
 
-    await handleDonationVaultEvent(makeEvent([symbolScVal('withdraw'), u64ScVal(2n)], i128ScVal(500n)));
+    await handleDonationVaultEvent(
+      makeEvent([symbolScVal('withdraw'), u64ScVal(2n)], i128ScVal(500n)),
+    );
 
     const stream = await prisma.stream.findUnique({ where: { onChainId: 2n } });
     expect(stream?.balance).toBe('500');
@@ -107,11 +154,9 @@ describe('handleDonationVaultEvent', () => {
     });
 
     const onChainTime = '2024-03-10T08:00:00.000Z';
-    const event = makeEvent(
-      [symbolScVal('withdraw'), u64ScVal(20n)],
-      i128ScVal(200n),
-      { ledgerClosedAt: onChainTime },
-    );
+    const event = makeEvent([symbolScVal('withdraw'), u64ScVal(20n)], i128ScVal(200n), {
+      ledgerClosedAt: onChainTime,
+    });
     await handleDonationVaultEvent(event);
 
     const stream = await prisma.stream.findUnique({ where: { onChainId: 20n } });
@@ -202,7 +247,9 @@ describe('handleDonationVaultEvent', () => {
       },
     });
 
-    await handleDonationVaultEvent(makeEvent([symbolScVal('topup'), u64ScVal(4n)], i128ScVal(500n)));
+    await handleDonationVaultEvent(
+      makeEvent([symbolScVal('topup'), u64ScVal(4n)], i128ScVal(500n)),
+    );
 
     const stream = await prisma.stream.findUnique({ where: { onChainId: 4n } });
     expect(stream?.balance).toBe('1000'); // unchanged — see the handler's comment
