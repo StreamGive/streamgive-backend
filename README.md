@@ -34,13 +34,47 @@ npm run dev
 
 To run the whole stack containerized instead, after `npm run db:push` above: `docker compose up --build`.
 
-To run the integration test suite, additionally:
+## Testing and the local test database
 
-```
-cp .env.test.example .env.test
-npm run db:push:test
-npm test
-```
+The integration tests use PostgreSQL, not an in-memory database. They must use
+the separate `streamgive_test` database because each test truncates its tables
+through `resetDb()`.
+
+1. Start the Postgres service. Its initialization script creates both the
+   development database (`streamgive`) and `streamgive_test`:
+
+   ```bash
+   docker compose up -d postgres
+   ```
+
+2. Create the test environment file. The checked-in template points at
+   `localhost:5432/streamgive_test`; do not replace it with the development
+   database URL:
+
+   ```bash
+   cp .env.test.example .env.test
+   ```
+
+3. Install dependencies and push the current Prisma schema to the test
+   database:
+
+   ```bash
+   npm install
+   npm run db:push:test
+   ```
+
+4. Run the suite:
+
+   ```bash
+   npm test
+   ```
+
+Run `npm run db:push:test` again whenever `prisma/schema.prisma` changes. The
+Compose initialization script runs only when the Postgres data volume is first
+created. If `streamgive_test` is missing because the volume predates that
+script, recreate the volume with `docker compose down -v` followed by
+`docker compose up -d postgres` (this also deletes local development data), or
+create the database manually before running `db:push:test`.
 
 ## Troubleshooting
 
