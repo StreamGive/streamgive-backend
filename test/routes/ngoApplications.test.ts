@@ -156,6 +156,7 @@ describe('GET /ngo-applications/status', () => {
     await prisma.ngoApplication.create({
       data: validApplicationPayload({ ownerAddress, status: 'REJECTED' }),
     });
+
     const latest = await prisma.ngoApplication.create({
       data: validApplicationPayload({ ownerAddress, status: 'APPROVED' }),
     });
@@ -170,7 +171,6 @@ describe('GET /ngo-applications/status', () => {
     expect(body.status).toBe('APPROVED');
     expect(body.createdAt).toBe(latest.createdAt.toISOString());
     expect(body.updatedAt).toBe(latest.updatedAt.toISOString());
-    // No contact details or other application fields leak out.
     expect(Object.keys(body).sort()).toEqual(['createdAt', 'status', 'updatedAt']);
 
     await app.close();
@@ -207,7 +207,10 @@ describe('GET /ngo-applications/status', () => {
   it('rejects a missing address with 400', async () => {
     const app = buildServer();
 
-    const response = await app.inject({ method: 'GET', url: '/ngo-applications/status' });
+    const response = await app.inject({
+      method: 'GET',
+      url: '/ngo-applications/status',
+    });
 
     expect(response.statusCode).toBe(400);
 
@@ -227,7 +230,11 @@ describe('admin NGO application review', () => {
   it('rejects an unsigned request with 401', async () => {
     const app = buildServer();
 
-    const response = await app.inject({ method: 'GET', url: '/ngo-applications' });
+    const response = await app.inject({
+      method: 'GET',
+      url: '/ngo-applications',
+    });
+
     expect(response.statusCode).toBe(401);
 
     await app.close();
@@ -238,7 +245,12 @@ describe('admin NGO application review', () => {
     const headers = signAdminRequest(adminKeypair, 'GET', '/ngo-applications');
     headers['x-admin-signature'] = Buffer.alloc(63).toString('base64');
 
-    const response = await app.inject({ method: 'GET', url: '/ngo-applications', headers });
+    const response = await app.inject({
+      method: 'GET',
+      url: '/ngo-applications',
+      headers,
+    });
+
     expect(response.statusCode).toBe(401);
     expect(response.json().error).toBe('unauthorized');
 
@@ -249,7 +261,12 @@ describe('admin NGO application review', () => {
     const app = buildServer();
     const headers = signAdminRequest(adminKeypair, 'GET', '/ngo-applications');
 
-    const response = await app.inject({ method: 'GET', url: '/ngo-applications', headers });
+    const response = await app.inject({
+      method: 'GET',
+      url: '/ngo-applications',
+      headers,
+    });
+
     expect(response.statusCode).toBe(200);
 
     await app.close();
@@ -257,17 +274,26 @@ describe('admin NGO application review', () => {
 
   it('paginates applications while reporting the full total', async () => {
     const app = buildServer();
+
     await Promise.all(
       ['A', 'B', 'C'].map((suffix) =>
-        prisma.ngoApplication.create({ data: validApplicationPayload({ ownerAddress: fakeAddress(suffix) }) }),
+        prisma.ngoApplication.create({
+          data: validApplicationPayload({ ownerAddress: fakeAddress(suffix) }),
+        }),
       ),
     );
 
     const url = '/ngo-applications?limit=2&offset=1';
     const headers = signAdminRequest(adminKeypair, 'GET', url);
-    const response = await app.inject({ method: 'GET', url, headers });
+
+    const response = await app.inject({
+      method: 'GET',
+      url,
+      headers,
+    });
 
     expect(response.statusCode).toBe(200);
+
     const body = response.json();
     expect(body.total).toBe(3);
     expect(body.limit).toBe(2);
@@ -280,15 +306,27 @@ describe('admin NGO application review', () => {
   it('approves a pending application', async () => {
     const app = buildServer();
 
-    const application = await prisma.ngoApplication.create({ data: validApplicationPayload() });
+    const application = await prisma.ngoApplication.create({
+      data: validApplicationPayload(),
+    });
+
     const url = `/ngo-applications/${application.id}/approve`;
     const headers = signAdminRequest(adminKeypair, 'POST', url);
 
-    const response = await app.inject({ method: 'POST', url, headers, payload: {} });
+    const response = await app.inject({
+      method: 'POST',
+      url,
+      headers,
+      payload: {},
+    });
+
     expect(response.statusCode).toBe(200);
     expect(response.json().status).toBe('APPROVED');
 
-    const stored = await prisma.ngoApplication.findUnique({ where: { id: application.id } });
+    const stored = await prisma.ngoApplication.findUnique({
+      where: { id: application.id },
+    });
+
     expect(stored?.status).toBe('APPROVED');
 
     await app.close();
@@ -297,17 +335,27 @@ describe('admin NGO application review', () => {
   it('rejects a non-object (array) body on approve with 400 invalid_request', async () => {
     const app = buildServer();
 
-    const application = await prisma.ngoApplication.create({ data: validApplicationPayload() });
+    const application = await prisma.ngoApplication.create({
+      data: validApplicationPayload(),
+    });
+
     const url = `/ngo-applications/${application.id}/approve`;
     const headers = signAdminRequest(adminKeypair, 'POST', url);
 
-    const response = await app.inject({ method: 'POST', url, headers, payload: [] as never });
+    const response = await app.inject({
+      method: 'POST',
+      url,
+      headers,
+      payload: [] as never,
+    });
 
     expect(response.statusCode).toBe(400);
     expect(response.json().error).toBe('invalid_request');
 
-    // The invalid request must not have touched the application.
-    const stored = await prisma.ngoApplication.findUnique({ where: { id: application.id } });
+    const stored = await prisma.ngoApplication.findUnique({
+      where: { id: application.id },
+    });
+
     expect(stored?.status).toBe('PENDING');
 
     await app.close();
@@ -316,7 +364,10 @@ describe('admin NGO application review', () => {
   it('rejects a non-object (array) body on reject with 400 invalid_request', async () => {
     const app = buildServer();
 
-    const application = await prisma.ngoApplication.create({ data: validApplicationPayload() });
+    const application = await prisma.ngoApplication.create({
+      data: validApplicationPayload(),
+    });
+
     const url = `/ngo-applications/${application.id}/reject`;
     const headers = signAdminRequest(adminKeypair, 'POST', url);
 
@@ -330,8 +381,41 @@ describe('admin NGO application review', () => {
     expect(response.statusCode).toBe(400);
     expect(response.json().error).toBe('invalid_request');
 
-    const stored = await prisma.ngoApplication.findUnique({ where: { id: application.id } });
+    const stored = await prisma.ngoApplication.findUnique({
+      where: { id: application.id },
+    });
+
     expect(stored?.status).toBe('PENDING');
+
+    await app.close();
+  });
+
+  it('rejects a pending application', async () => {
+    const app = buildServer();
+
+    const application = await prisma.ngoApplication.create({
+      data: validApplicationPayload(),
+    });
+
+    const url = `/ngo-applications/${application.id}/reject`;
+    const headers = signAdminRequest(adminKeypair, 'POST', url);
+
+    const response = await app.inject({
+      method: 'POST',
+      url,
+      headers,
+      payload: { reviewNote: 'No registration documents on file.' },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().status).toBe('REJECTED');
+
+    const stored = await prisma.ngoApplication.findUnique({
+      where: { id: application.id },
+    });
+
+    expect(stored?.status).toBe('REJECTED');
+    expect(stored?.reviewNote).toBe('No registration documents on file.');
 
     await app.close();
   });
@@ -339,12 +423,21 @@ describe('admin NGO application review', () => {
   it('rejects a signature for a different URL than the one requested', async () => {
     const app = buildServer();
 
-    const application = await prisma.ngoApplication.create({ data: validApplicationPayload() });
+    const application = await prisma.ngoApplication.create({
+      data: validApplicationPayload(),
+    });
+
     const realUrl = `/ngo-applications/${application.id}/approve`;
-    // Signed for a *different* application's approve endpoint.
+
     const headers = signAdminRequest(adminKeypair, 'POST', '/ngo-applications/other-id/approve');
 
-    const response = await app.inject({ method: 'POST', url: realUrl, headers, payload: {} });
+    const response = await app.inject({
+      method: 'POST',
+      url: realUrl,
+      headers,
+      payload: {},
+    });
+
     expect(response.statusCode).toBe(401);
 
     await app.close();
@@ -354,6 +447,7 @@ describe('admin NGO application review', () => {
     const app = buildServer();
 
     const nonExistentId = '00000000-0000-0000-0000-000000000000';
+
     const approveUrl = `/ngo-applications/${nonExistentId}/approve`;
     const approveHeaders = signAdminRequest(adminKeypair, 'POST', approveUrl);
 
@@ -363,6 +457,7 @@ describe('admin NGO application review', () => {
       headers: approveHeaders,
       payload: {},
     });
+
     expect(approveResponse.statusCode).toBe(404);
     expect(approveResponse.json().error).toBe('not_found');
 
@@ -375,6 +470,7 @@ describe('admin NGO application review', () => {
       headers: rejectHeaders,
       payload: {},
     });
+
     expect(rejectResponse.statusCode).toBe(404);
     expect(rejectResponse.json().error).toBe('not_found');
 
@@ -394,7 +490,11 @@ describe('GET /ngo-applications/stats', () => {
   it('rejects an unsigned request with 401', async () => {
     const app = buildServer();
 
-    const response = await app.inject({ method: 'GET', url: '/ngo-applications/stats' });
+    const response = await app.inject({
+      method: 'GET',
+      url: '/ngo-applications/stats',
+    });
+
     expect(response.statusCode).toBe(401);
 
     await app.close();
@@ -405,14 +505,27 @@ describe('GET /ngo-applications/stats', () => {
 
     await prisma.ngoApplication.createMany({
       data: [
-        validApplicationPayload({ ownerAddress: fakeAddress('P'), status: 'PENDING' }),
-        validApplicationPayload({ ownerAddress: fakeAddress('P'), status: 'PENDING' }),
-        validApplicationPayload({ ownerAddress: fakeAddress('A'), status: 'APPROVED' }),
-        validApplicationPayload({ ownerAddress: fakeAddress('R'), status: 'REJECTED' }),
+        validApplicationPayload({
+          ownerAddress: fakeAddress('P'),
+          status: 'PENDING',
+        }),
+        validApplicationPayload({
+          ownerAddress: fakeAddress('P'),
+          status: 'PENDING',
+        }),
+        validApplicationPayload({
+          ownerAddress: fakeAddress('A'),
+          status: 'APPROVED',
+        }),
+        validApplicationPayload({
+          ownerAddress: fakeAddress('R'),
+          status: 'REJECTED',
+        }),
       ],
     });
 
     const headers = signAdminRequest(adminKeypair, 'GET', '/ngo-applications/stats');
+
     const response = await app.inject({
       method: 'GET',
       url: '/ngo-applications/stats',
@@ -420,8 +533,15 @@ describe('GET /ngo-applications/stats', () => {
     });
 
     expect(response.statusCode).toBe(200);
+
     const body = response.json();
-    expect(body.counts).toEqual({ PENDING: 2, APPROVED: 1, REJECTED: 1 });
+
+    expect(body.counts).toEqual({
+      PENDING: 2,
+      APPROVED: 1,
+      REJECTED: 1,
+    });
+
     expect(body.total).toBe(4);
 
     await app.close();
@@ -431,6 +551,7 @@ describe('GET /ngo-applications/stats', () => {
     const app = buildServer();
 
     const headers = signAdminRequest(adminKeypair, 'GET', '/ngo-applications/stats');
+
     const response = await app.inject({
       method: 'GET',
       url: '/ngo-applications/stats',
@@ -438,10 +559,256 @@ describe('GET /ngo-applications/stats', () => {
     });
 
     expect(response.statusCode).toBe(200);
+
     const body = response.json();
-    expect(body.counts).toEqual({ PENDING: 0, APPROVED: 0, REJECTED: 0 });
+
+    expect(body.counts).toEqual({
+      PENDING: 0,
+      APPROVED: 0,
+      REJECTED: 0,
+    });
+
     expect(body.total).toBe(0);
 
     await app.close();
+  });
+});
+
+/**
+ * `NgoApplication.status` is `PENDING -> APPROVED | REJECTED`, and both
+ * targets are terminal. These tests cover transitions that must be refused
+ * because the application has already been reviewed.
+ */
+describe('application review state machine', () => {
+  beforeAll(() => {
+    process.env.ADMIN_ADDRESS = adminKeypair.publicKey();
+  });
+
+  afterEach(async () => {
+    await resetDb();
+  });
+
+  async function review(
+    application: { id: string },
+    decision: 'approve' | 'reject',
+    payload: Record<string, unknown> = {},
+  ) {
+    const app = buildServer();
+
+    const url = `/ngo-applications/${application.id}/${decision}`;
+
+    const response = await app.inject({
+      method: 'POST',
+      url,
+      headers: signAdminRequest(adminKeypair, 'POST', url),
+      payload,
+    });
+
+    await app.close();
+
+    return response;
+  }
+
+  it('refuses to approve an application that is already approved', async () => {
+    const application = await prisma.ngoApplication.create({
+      data: validApplicationPayload({ status: 'APPROVED' }),
+    });
+
+    const response = await review(application, 'approve');
+
+    expect(response.statusCode).toBe(409);
+    expect(response.json().error).toBe('already_reviewed');
+
+    const stored = await prisma.ngoApplication.findUnique({
+      where: { id: application.id },
+    });
+
+    expect(stored?.status).toBe('APPROVED');
+  });
+
+  it('refuses to approve an application that was rejected', async () => {
+    const application = await prisma.ngoApplication.create({
+      data: validApplicationPayload({ status: 'REJECTED' }),
+    });
+
+    const response = await review(application, 'approve');
+
+    expect(response.statusCode).toBe(409);
+    expect(response.json().error).toBe('already_reviewed');
+
+    const stored = await prisma.ngoApplication.findUnique({
+      where: { id: application.id },
+    });
+
+    expect(stored?.status).toBe('REJECTED');
+  });
+
+  it('refuses to reject an application that was approved', async () => {
+    const application = await prisma.ngoApplication.create({
+      data: validApplicationPayload({ status: 'APPROVED' }),
+    });
+
+    const response = await review(application, 'reject');
+
+    expect(response.statusCode).toBe(409);
+    expect(response.json().error).toBe('already_reviewed');
+
+    const stored = await prisma.ngoApplication.findUnique({
+      where: { id: application.id },
+    });
+
+    expect(stored?.status).toBe('APPROVED');
+  });
+
+  it('refuses a re-review and leaves the recorded decision and note untouched', async () => {
+    const application = await prisma.ngoApplication.create({
+      data: {
+        ...validApplicationPayload(),
+        status: 'REJECTED',
+        reviewNote: 'Original reviewer note.',
+      },
+    });
+
+    const response = await review(application, 'approve', {
+      reviewNote: 'Overwriting note.',
+    });
+
+    expect(response.statusCode).toBe(409);
+    expect(response.json().error).toBe('already_reviewed');
+
+    const stored = await prisma.ngoApplication.findUnique({
+      where: { id: application.id },
+    });
+
+    expect(stored?.status).toBe('REJECTED');
+    expect(stored?.reviewNote).toBe('Original reviewer note.');
+  });
+
+  it('reports the current status on a refused review', async () => {
+    const application = await prisma.ngoApplication.create({
+      data: validApplicationPayload({ status: 'APPROVED' }),
+    });
+
+    const response = await review(application, 'approve');
+
+    expect(response.statusCode).toBe(409);
+
+    expect(response.json()).toEqual({
+      error: 'already_reviewed',
+      status: 'APPROVED',
+    });
+  });
+
+  it('lets only one of two concurrent reviews through', async () => {
+    const application = await prisma.ngoApplication.create({
+      data: validApplicationPayload(),
+    });
+
+    const url = `/ngo-applications/${application.id}/approve`;
+    const app = buildServer();
+
+    const headers = signAdminRequest(adminKeypair, 'POST', url);
+
+    const [first, second] = await Promise.all([
+      app.inject({
+        method: 'POST',
+        url,
+        headers,
+        payload: { reviewNote: 'First note.' },
+      }),
+      app.inject({
+        method: 'POST',
+        url,
+        headers,
+        payload: { reviewNote: 'Second note.' },
+      }),
+    ]);
+
+    expect([first.statusCode, second.statusCode].sort((a, b) => a - b)).toEqual([200, 409]);
+
+    const winner = first.statusCode === 200 ? first : second;
+    const loser = first.statusCode === 200 ? second : first;
+
+    expect(loser.json()).toEqual({
+      error: 'already_reviewed',
+      status: 'APPROVED',
+    });
+
+    const stored = await prisma.ngoApplication.findUnique({
+      where: { id: application.id },
+    });
+
+    expect(stored?.status).toBe('APPROVED');
+    expect(stored?.reviewNote).toBe(winner.json().reviewNote);
+
+    await app.close();
+  });
+
+  it('lets only one of two conflicting concurrent reviews through', async () => {
+    const application = await prisma.ngoApplication.create({
+      data: validApplicationPayload(),
+    });
+
+    const approveUrl = `/ngo-applications/${application.id}/approve`;
+    const rejectUrl = `/ngo-applications/${application.id}/reject`;
+
+    const app = buildServer();
+
+    const [approve, reject] = await Promise.all([
+      app.inject({
+        method: 'POST',
+        url: approveUrl,
+        headers: signAdminRequest(adminKeypair, 'POST', approveUrl),
+        payload: {},
+      }),
+      app.inject({
+        method: 'POST',
+        url: rejectUrl,
+        headers: signAdminRequest(adminKeypair, 'POST', rejectUrl),
+        payload: {},
+      }),
+    ]);
+
+    expect([approve.statusCode, reject.statusCode].sort((a, b) => a - b)).toEqual([200, 409]);
+
+    const stored = await prisma.ngoApplication.findUnique({
+      where: { id: application.id },
+    });
+
+    expect(stored?.status).toBe(approve.statusCode === 200 ? 'APPROVED' : 'REJECTED');
+
+    await app.close();
+  });
+
+  it('accepts a review note at the 2000 character limit', async () => {
+    const application = await prisma.ngoApplication.create({
+      data: validApplicationPayload(),
+    });
+
+    const response = await review(application, 'approve', {
+      reviewNote: 'a'.repeat(2000),
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().status).toBe('APPROVED');
+  });
+
+  it('rejects an over-long review note with 400 and leaves the application pending', async () => {
+    const application = await prisma.ngoApplication.create({
+      data: validApplicationPayload(),
+    });
+
+    const response = await review(application, 'approve', {
+      reviewNote: 'a'.repeat(2001),
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json().error).toBe('invalid_request');
+
+    const stored = await prisma.ngoApplication.findUnique({
+      where: { id: application.id },
+    });
+
+    expect(stored?.status).toBe('PENDING');
   });
 });

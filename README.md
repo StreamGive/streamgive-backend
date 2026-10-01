@@ -19,6 +19,15 @@ An NGO's verified status consists of two distinct steps kept deliberately separa
 
 Keeping off-chain application review separate from on-chain contract approval ensures that sensitive organizational details and review metadata remain off-chain, while the Stellar ledger remains the single source of truth for execution permissions and verified status.
 
+The off-chain review state machine is deliberately one-way. An application is
+created `PENDING` and moves to `APPROVED` or `REJECTED` exactly once; both of
+those states are terminal. `POST /ngo-applications/:id/approve` and
+`POST /ngo-applications/:id/reject` only match a row that is still `PENDING`,
+so a repeated, retried or replayed review is refused with `409
+already_reviewed` (plus the status already on file) rather than overwriting
+the recorded decision and its review note. An applicant who wants to be
+considered again after a rejection submits a new application.
+
 ## Local development
 
 ```
