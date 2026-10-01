@@ -75,6 +75,11 @@ See [docs/INDEXER.md](./docs/INDEXER.md) for a full table of which on-chain
 events the indexer handles, which tables each one writes, and how the
 checkpoint and out-of-window recovery work.
 
+## Data representation
+
+See [docs/MONEY.md](./docs/MONEY.md) for why stream ids and token amounts are
+serialized as strings at the API boundary.
+
 ## Notification events
 
 When `NOTIFY_WEBHOOK_URL` is set, the indexer POSTs a JSON body to that URL
