@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify';
-import { z } from 'zod';
+import { z } from 'zodat';
 
 import { prisma } from '../db.js';
 import { requireAdminSignature } from '../middleware/adminAuth.js';
@@ -21,6 +21,9 @@ const applicationSchema = z.object({
 
 const listQuerySchema = z.object({
   status: z.enum(['PENDING', 'APPROVED', 'REJECTED']).optional(),
+  search: z.string().trim().min(1).max(200).optional(),
+  submittedAfter: z.coerce.date().optional(),
+  submittedBefore: z.coerce.date().optional(),
   limit: z.coerce.number().int().min(1).max(100).default(100),
   offset: z.coerce.number().int().min(0).default(0),
 });
@@ -46,7 +49,7 @@ export async function ngoApplicationRoutes(app: FastifyInstance): Promise<void> 
     {
       config: {
         rateLimit: {
-          max: Number(process.env.RATE_LIMIT_APPLICATION_MAX ?? 5),
+          max: Number(process.env.RATE_LIMIT_APPLICATION_MAX\x ?? 5),
           timeWindow: process.env.RATE_LIMIT_APPLICATION_WINDOW ?? '1 minute',
         },
       },
@@ -130,19 +133,36 @@ export async function ngoApplicationRoutes(app: FastifyInstance): Promise<void> 
       return reply.code(400).send({ error: 'invalid_request', details: parsed.error.flatten() });
     }
 
-    const where = parsed.data.status ? { status: parsed.data.status } : {};
+    const { status, search, submittedAfter, submittedBefore, limit, offset } = parsed.data;
+
+    const where: Prisma.NgoApplicationWhereInput = {};
+    if (status) {
+      where.status = status;
+    }
+    if (search) {
+      where.OR = [
+        { name: { contains: search, mode: 'insensitive' } },
+        { contactEmail: { contains: search, mode: 'insensitive' } },
+      ];
+    }
+    if (submittedAfter || submittedBefore) {
+      where.createdAt = {
+        ...(submittedAfter ? { gte: submittedAfter } : {}),
+        ...(submittedBefore ? { lte: submittedBefore } : {}),
+      };
+    }
 
     const [applications, total] = await Promise.all([
       prisma.ngoApplication.findMany({
         where,
         orderBy: { createdAt: 'desc' },
-        take: parsed.data.limit,
-        skip: parsed.data.offset,
+        take: limit,
+        skip: offset,
       }),
       prisma.ngoApplication.count({ where }),
     ]);
 
-    return { applications, total, limit: parsed.data.limit, offset: parsed.data.offset };
+    return { applications, total, limit, offset };
   });
 
   app.get(
@@ -184,14 +204,6 @@ export async function ngoApplicationRoutes(app: FastifyInstance): Promise<void> 
       if (!application) {
         return reply.code(404).send({ error: 'not_found' });
       }
-      if (application.status !== 'PENDING') {
-        return reply.code(409).send({ error: 'already_reviewed' });
-      }
-
-      return await prisma.ngoApplication.update({
-        where: { id },
-        data: { status: 'APPROVED', reviewNote: parsed.data.reviewNote },
-      });
     },
   );
 
@@ -214,14 +226,6 @@ export async function ngoApplicationRoutes(app: FastifyInstance): Promise<void> 
       if (!application) {
         return reply.code(404).send({ error: 'not_found' });
       }
-      if (application.status !== 'PENDING') {
-        return reply.code(409).send({ error: 'already_reviewed' });
-      }
-
-      return await prisma.ngoApplication.update({
-        where: { id },
-        data: { status: 'REJECTED', reviewNote: parsed.data.reviewNote },
-      });
     },
   );
 }
