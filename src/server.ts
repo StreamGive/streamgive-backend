@@ -137,13 +137,31 @@ export function buildServer(options?: BuildServerOptions) {
     timeWindow: process.env.RATE_LIMIT_WINDOW ?? '1 minute',
   });
 
-  app.get('/health', async (_request, reply) => {
-    try {
+app.get(
+    '/health',
+    // Health checks are also used by free-tier uptime pingers. They must not
+    // consume the shared client rate-limit bucket.
+    { config: { rateLimit: false } },
+    async (_request, reply) => {
+      try {
       await prisma.$queryRaw`SELECT 1`;
       return { status: 'ok' };
     } catch {
       return reply.code(503).send({ status: 'error', database: 'unreachable' });
     }
+  });
+
+  app.get('/tokens', async () => {
+    const grouped = await prisma.stream.groupBy({
+      by: ['tokenAddress'],
+      _count: { _all: true },
+      orderBy: { _count: { tokenAddress: 'desc' } },
+    });
+
+    return grouped.map((group) => ({
+      tokenAddress: group.tokenAddress,
+      streamCount: group._count._all,
+    }));
   });
 
   app.register(ngoRoutes);
