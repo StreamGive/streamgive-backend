@@ -8,6 +8,10 @@ import { requireAdminSignature } from '../middleware/adminAuth.js';
 const idParamSchema = z.object({ id: z.string().uuid() });
 const RECENT_STREAMS_LIMIT = 10;
 
+const updateNgoSchema = z.object({
+  displayName: z.string().nullable().optional(),
+});
+
 const sortSchema = z.enum(['newest', 'oldest', 'name']).default('newest');
 
 const listQuerySchema = z.object({
@@ -158,6 +162,10 @@ export async function ngoRoutes(app: FastifyInstance): Promise<void> {
 
     const hasMore = rows.length > limit;
     const ngos = hasMore ? rows.slice(0, limit) : rows;
+    const mappedNgos = ngos.map((ngo) => ({
+      ...ngo,
+      name: ngo.displayName || ngo.name,
+    }));
     const nextCursor = hasMore ? ngos[ngos.length - 1].id : null;
 
     return sendPublicCacheable(request, reply, { ngos, nextCursor });
@@ -263,5 +271,29 @@ export async function ngoRoutes(app: FastifyInstance): Promise<void> {
     }
 
     return sendPublicCacheable(request, reply, ngo);
+  });
+
+  app.patch('/admin/ngos/:id', { preHandler: requireAdminSignature }, async (request, reply) => {
+    const parsedParams = idParamSchema.safeParse(request.params);
+    if (!parsedParams.success) {
+      return reply.code(400).send({ error: 'invalid_request' });
+    }
+
+    const parsedBody = updateNgoSchema.safeParse(request.body);
+    if (!parsedBody.success) {
+      return reply.code(400).send({ error: 'invalid_request', details: parsedBody.error.flatten() });
+    }
+
+    const ngo = await prisma.ngo.findUnique({ where: { id: parsedParams.data.id } });
+    if (!ngo) {
+      return reply.code(404).send({ error: 'not_found' });
+    }
+
+    const updated = await prisma.ngo.update({
+      where: { id: ngo.id },
+      data: { displayName: parsedBody.data.displayName },
+    });
+
+    return { ...updated, name: updated.displayName || updated.name };
   });
 }
