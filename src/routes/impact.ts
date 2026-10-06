@@ -42,15 +42,6 @@ export async function impactRoutes(app: FastifyInstance): Promise<void> {
     });
   });
 
-      return {
-        totalCommitted: totalCommitted.toString(),
-        totalWithdrawn: totalWithdrawn.toString(),
-        activeStreams,
-        verifiedNgoCount,
-      };
-    },
-  );
-
   app.get(
     '/impact/:ngoId',
     {
