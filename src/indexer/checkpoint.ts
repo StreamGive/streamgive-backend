@@ -7,11 +7,15 @@ export interface IndexerCheckpoint {
   lastEventId?: string;
 }
 
-export async function getCheckpoint(): Promise<IndexerCheckpoint | undefined> {
+export async function getCheckpointState(): Promise<IndexerCheckpoint | undefined> {
   const row = await prisma.indexerCheckpoint.findUnique({ where: { id: CHECKPOINT_ID } });
   return row
     ? { lastLedger: row.lastLedger, lastEventId: row.lastEventId ?? undefined }
     : undefined;
+}
+
+export async function getCheckpoint(): Promise<number | undefined> {
+  return (await getCheckpointState())?.lastLedger;
 }
 
 export async function saveCheckpoint(ledger: number, eventId: string | null = null): Promise<void> {
