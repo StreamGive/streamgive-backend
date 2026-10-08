@@ -1,14 +1,17 @@
-import { Keypair } from '@stellar/stellar-sdk';
+import { Keypair, StrKey } from '@stellar/stellar-sdk';
 
 import { prisma } from '../../src/db.js';
 
 /** Truncates every table. Call between tests so fixtures never leak across them. */
 export async function resetDb(): Promise<void> {
+  await prisma.notificationLog.deleteMany();
+  await prisma.streamEvent.deleteMany();
   await prisma.stream.deleteMany();
   await prisma.donor.deleteMany();
   await prisma.ngo.deleteMany();
   await prisma.ngoApplication.deleteMany();
   await prisma.indexerCheckpoint.deleteMany();
+  await prisma.indexerDeadLetter.deleteMany();
 }
 
 /**
@@ -26,4 +29,9 @@ export async function resetDb(): Promise<void> {
 export function fakeAddress(distinguishingChar: string): string {
   const seed = Buffer.alloc(32, distinguishingChar.toUpperCase().charCodeAt(0));
   return Keypair.fromRawEd25519Seed(seed).publicKey();
+}
+/** A checksum-valid Stellar contract address derived deterministically for tests. */
+export function fakeContractAddress(distinguishingChar: string): string {
+  const contractId = Buffer.alloc(32, distinguishingChar.toUpperCase().charCodeAt(0));
+  return StrKey.encodeContract(contractId);
 }
