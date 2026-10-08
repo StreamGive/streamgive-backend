@@ -207,8 +207,8 @@ export function buildServer(options?: BuildServerOptions) {
     const db = dbResult.status === 'fulfilled' ? 'ok' : 'error';
     const rpc = rpcResult.status === 'fulfilled' ? 'ok' : 'error';
 
-    const status = db === 'ok' && rpc === 'ok' ? 'ok' : 'error';
-    return reply.code(status === 'ok' ? 200 : 503).send({ status, db, rpc });
+      const status = db === 'ok' && rpc === 'ok' ? 'ok' : 'error';
+      return reply.code(status === 'ok' ? 200 : 503).send({ status, db, rpc });
   });
 
   app.get('/health/ready', async (request, reply) => {
