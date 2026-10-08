@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import { prisma } from '../../src/db.js';
 import { buildServer } from '../../src/server.js';
-import { fakeAddress, resetDb } from '../helpers/db.js';
+import { fakeAddress, fakeContractAddress, resetDb } from '../helpers/db.js';
 
 describe('GET /v1/streams', () => {
   afterEach(async () => {
@@ -75,6 +75,57 @@ describe('GET /v1/streams', () => {
     await app.close();
   });
 
+  it('filters by token contract address', async () => {
+    const app = buildServer();
+
+    const donor = await prisma.donor.create({ data: { address: fakeAddress('A') } });
+    const ngo = await prisma.ngo.create({
+      data: { ownerAddress: fakeAddress('B'), name: 'NGO', verified: true },
+    });
+    const targetToken = fakeContractAddress('C');
+
+    await prisma.stream.createMany({
+      data: [
+        {
+          onChainId: 1n,
+          donorId: donor.id,
+          ngoId: ngo.id,
+          tokenAddress: targetToken,
+          rate: '1',
+          balance: '100',
+          withdrawn: '0',
+        },
+        {
+          onChainId: 2n,
+          donorId: donor.id,
+          ngoId: ngo.id,
+          tokenAddress: fakeContractAddress('D'),
+          rate: '1',
+          balance: '200',
+          withdrawn: '0',
+        },
+      ],
+    });
+
+    const response = await app.inject({ method: 'GET', url: `/v1/streams?token=${targetToken}` });
+
+    expect(response.statusCode).toBe(200);
+    expect(
+      response.json().streams.map((stream: { onChainId: string }) => stream.onChainId),
+    ).toEqual(['1']);
+
+    await app.close();
+  });
+
+  it('400s on a malformed token contract address', async () => {
+    const app = buildServer();
+
+    const response = await app.inject({ method: 'GET', url: '/v1/streams?token=not-a-contract' });
+
+    expect(response.statusCode).toBe(400);
+    await app.close();
+  });
+
   it('coerces a string limit and rejects values above the maximum', async () => {
     const app = buildServer();
 
@@ -99,7 +150,10 @@ describe('GET /v1/streams', () => {
     expect(coerced.json().streams).toHaveLength(2);
     expect(coerced.json().hasMore).toBe(true);
 
-    const tooLarge = await app.inject({ method: 'GET', url: `/v1/streams?ngo=${ngo.id}&limit=101` });
+    const tooLarge = await app.inject({
+      method: 'GET',
+      url: `/v1/streams?ngo=${ngo.id}&limit=101`,
+    });
     expect(tooLarge.statusCode).toBe(400);
 
     await app.close();
@@ -365,7 +419,6 @@ describe('GET /v1/streams', () => {
 
     await app.close();
   });
-
 });
 
 describe('GET /v1/streams/:id', () => {
@@ -520,7 +573,7 @@ describe('GET /streams/:id/activity', () => {
     await resetDb();
   });
 
-  it('returns a stream\'s events newest first', async () => {
+  it("returns a stream's events newest first", async () => {
     const app = buildServer();
 
     const donor = await prisma.donor.create({ data: { address: fakeAddress('A') } });
@@ -554,7 +607,11 @@ describe('GET /streams/:id/activity', () => {
 
     const body = response.json();
     expect(body.events).toHaveLength(3);
-    expect(body.events.map((e: { type: string }) => e.type)).toEqual(['CANCELLED', 'WITHDRAWAL', 'TOP_UP']);
+    expect(body.events.map((e: { type: string }) => e.type)).toEqual([
+      'CANCELLED',
+      'WITHDRAWAL',
+      'TOP_UP',
+    ]);
     expect(body.hasMore).toBe(false);
 
     await app.close();
@@ -593,7 +650,10 @@ describe('GET /streams/:id/activity', () => {
     const firstBody = firstPage.json();
     expect(firstBody.events).toHaveLength(2);
     expect(firstBody.hasMore).toBe(true);
-    expect(firstBody.events.map((e: { type: string }) => e.type)).toEqual(['CANCELLED', 'WITHDRAWAL']);
+    expect(firstBody.events.map((e: { type: string }) => e.type)).toEqual([
+      'CANCELLED',
+      'WITHDRAWAL',
+    ]);
 
     const secondPage = await app.inject({
       method: 'GET',

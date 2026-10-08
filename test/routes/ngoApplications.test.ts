@@ -1,8 +1,11 @@
 import { Keypair } from '@stellar/stellar-sdk';
-import { afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+
+vi.mock('../../src/notifications/service.js', () => ({ notify: vi.fn() }));
 
 import { prisma } from '../../src/db.js';
 import { buildServer } from '../../src/server.js';
+import { notify } from '../../src/notifications/service.js';
 import { fakeAddress, resetDb } from '../helpers/db.js';
 import { signAdminRequest } from '../helpers/adminAuth.js';
 
@@ -24,6 +27,7 @@ describe('POST /v1/ngo-applications', () => {
   });
 
   afterEach(async () => {
+    vi.mocked(notify).mockClear();
     await resetDb();
   });
 
@@ -38,6 +42,12 @@ describe('POST /v1/ngo-applications', () => {
 
     expect(response.statusCode).toBe(201);
     expect(response.json().status).toBe('PENDING');
+    expect(notify).toHaveBeenCalledWith({
+      type: 'application_submitted',
+      applicationId: response.json().id,
+      ownerAddress: response.json().ownerAddress,
+      name: response.json().name,
+    });
 
     await app.close();
   });
@@ -172,6 +182,7 @@ describe('POST /v1/ngo-applications', () => {
 
 describe('GET /v1/ngo-applications/status', () => {
   afterEach(async () => {
+    vi.mocked(notify).mockClear();
     await resetDb();
   });
 
@@ -247,6 +258,7 @@ describe('admin NGO application review', () => {
   });
 
   afterEach(async () => {
+    vi.mocked(notify).mockClear();
     await resetDb();
   });
 
@@ -297,7 +309,7 @@ describe('admin NGO application review', () => {
     await app.close();
   });
 
-it('rejects a seconds-based timestamp with a clear unit error', async () => {
+  it('rejects a seconds-based timestamp with a clear unit error', async () => {
     const app = buildServer();
     const headers = signAdminRequest(adminKeypair, 'GET', '/ngo-applications', {
       timestamp: Math.floor(Date.now() / 1000),
@@ -360,6 +372,38 @@ it('rejects a seconds-based timestamp with a clear unit error', async () => {
 
     const stored = await prisma.ngoApplication.findUnique({ where: { id: application.id } });
     expect(stored?.status).toBe('APPROVED');
+    expect(notify).toHaveBeenCalledWith({
+      type: 'application_reviewed',
+      applicationId: application.id,
+      ownerAddress: application.ownerAddress,
+      status: 'APPROVED',
+    });
+
+    await app.close();
+  });
+
+  it('notifies when a pending application is rejected', async () => {
+    const app = buildServer();
+    const application = await prisma.ngoApplication.create({ data: validApplicationPayload() });
+    const url = `/v1/ngo-applications/${application.id}/reject`;
+    const headers = signAdminRequest(adminKeypair, 'POST', url);
+
+    const response = await app.inject({
+      method: 'POST',
+      url,
+      headers,
+      payload: { reviewNote: 'Insufficient documentation' },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().status).toBe('REJECTED');
+    expect(notify).toHaveBeenCalledWith({
+      type: 'application_reviewed',
+      applicationId: application.id,
+      ownerAddress: application.ownerAddress,
+      status: 'REJECTED',
+      reviewNote: 'Insufficient documentation',
+    });
 
     await app.close();
   });
@@ -458,6 +502,7 @@ describe('GET /v1/ngo-applications/stats', () => {
   });
 
   afterEach(async () => {
+    vi.mocked(notify).mockClear();
     await resetDb();
   });
 
@@ -522,6 +567,7 @@ describe('GET /ngo-applications status filter', () => {
   });
 
   afterEach(async () => {
+    vi.mocked(notify).mockClear();
     await resetDb();
   });
 

@@ -3,14 +3,14 @@ import helmet from '@fastify/helmet';
 import rateLimit from '@fastify/rate-limit';
 import swagger from '@fastify/swagger';
 import swaggerUi from '@fastify/swagger-ui';
-import Fastify, { type FastifyError } from 'fastify';
+import Fastify from 'fastify';
+import type { FastifyError } from 'fastify';
 
 import { prisma } from './db.js';
 import { donorRoutes } from './routes/donors.js';
 import { impactRoutes } from './routes/impact.js';
 import { indexerStatusRoutes } from './routes/indexerStatus.js';
 import { getLatestLedgerSequence } from './stellar/rpc.js';
-import { getCheckpoint } from './indexer/checkpoint.js';
 import { ngoApplicationRoutes } from './routes/ngoApplications.js';
 import { ngoRoutes } from './routes/ngos.js';
 import { streamRoutes } from './routes/streams.js';
@@ -195,8 +195,8 @@ export function buildServer(options?: BuildServerOptions) {
     const db = dbResult.status === 'fulfilled' ? 'ok' : 'error';
     const rpc = rpcResult.status === 'fulfilled' ? 'ok' : 'error';
 
-    const status = db === 'ok' && rpc === 'ok' ? 'ok' : 'error';
-    return reply.code(status === 'ok' ? 200 : 503).send({ status, db, rpc });
+      const status = db === 'ok' && rpc === 'ok' ? 'ok' : 'error';
+      return reply.code(status === 'ok' ? 200 : 503).send({ status, db, rpc });
   });
 
   app.get('/health/ready', async (request, reply) => {

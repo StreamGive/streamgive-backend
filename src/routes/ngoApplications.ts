@@ -3,6 +3,7 @@ import { z } from 'zod';
 
 import { prisma } from '../db.js';
 import { requireAdminSignature } from '../middleware/adminAuth.js';
+import { notify } from '../notifications/service.js';
 
 const applicationSchema = z.object({
   ownerAddress: z.string().regex(/^G[A-Z2-7]{55}$/),
@@ -107,6 +108,12 @@ export async function ngoApplicationRoutes(app: FastifyInstance): Promise<void> 
         return reply.code(409).send({ error: 'application_already_pending' });
       }
 
+      await notify({
+        type: 'application_submitted',
+        applicationId: result.application.id,
+        ownerAddress: result.application.ownerAddress,
+        name: result.application.name,
+      });
       return reply.code(201).send(result.application);
     },
   );
@@ -243,10 +250,18 @@ export async function ngoApplicationRoutes(app: FastifyInstance): Promise<void> 
       }
 
       try {
-        return await prisma.ngoApplication.update({
+        const reviewed = await prisma.ngoApplication.update({
           where: { id, status: 'PENDING' },
           data: { status: 'APPROVED', reviewNote: parsed.data?.reviewNote },
         });
+        await notify({
+          type: 'application_reviewed',
+          applicationId: reviewed.id,
+          ownerAddress: reviewed.ownerAddress,
+          status: 'APPROVED',
+          ...(reviewed.reviewNote ? { reviewNote: reviewed.reviewNote } : {}),
+        });
+        return reviewed;
       } catch (err) {
         if (
           typeof err === 'object' &&
@@ -284,10 +299,18 @@ export async function ngoApplicationRoutes(app: FastifyInstance): Promise<void> 
       }
 
       try {
-        return await prisma.ngoApplication.update({
+        const reviewed = await prisma.ngoApplication.update({
           where: { id, status: 'PENDING' },
           data: { status: 'REJECTED', reviewNote: parsed.data?.reviewNote },
         });
+        await notify({
+          type: 'application_reviewed',
+          applicationId: reviewed.id,
+          ownerAddress: reviewed.ownerAddress,
+          status: 'REJECTED',
+          ...(reviewed.reviewNote ? { reviewNote: reviewed.reviewNote } : {}),
+        });
+        return reviewed;
       } catch (err) {
         if (
           typeof err === 'object' &&
