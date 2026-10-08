@@ -15,4 +15,19 @@ export type NotificationEvent =
       eventId?: string;
     }
   | { type: 'ngo_approved'; ownerAddress: string; ngoId: string; eventId?: string }
-  | { type: 'ngo_revoked'; ownerAddress: string; ngoId: string; eventId?: string };
+  | { type: 'ngo_revoked'; ownerAddress: string; ngoId: string; eventId?: string }
+  | {
+      type: 'application_submitted';
+      applicationId: string;
+      ownerAddress: string;
+      name: string;
+      eventId?: string;
+    }
+  | {
+      type: 'application_reviewed';
+      applicationId: string;
+      ownerAddress: string;
+      status: 'APPROVED' | 'REJECTED';
+      reviewNote?: string;
+      eventId?: string;
+    };
