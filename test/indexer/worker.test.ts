@@ -21,7 +21,7 @@ const mocks = vi.hoisted(() => {
     contractId,
     getEvents: vi.fn(),
     getLatestLedgerSequence: vi.fn(),
-    getCheckpoint: vi.fn(),
+    getCheckpointState: vi.fn(),
     saveCheckpoint: vi.fn(),
     // Memoised here, in a closure the module registry reset below does not
     // touch, so every re-import shares one PrismaClient (and one connection
@@ -41,21 +41,20 @@ vi.mock('../../src/stellar/rpc.js', () => ({
 }));
 
 vi.mock('../../src/indexer/checkpoint.js', async () => {
-  const actual =
-    await vi.importActual<typeof import('../../src/indexer/checkpoint.js')>(
-      '../../src/indexer/checkpoint.js',
-    );
+  const actual = await vi.importActual<typeof import('../../src/indexer/checkpoint.js')>(
+    '../../src/indexer/checkpoint.js',
+  );
 
   // Default both to the real implementation, so the pollOnce cases above keep
   // writing the actual row and reading it back out of the database. Only the
   // backoff cases override these, and only because they care about the delay
   // schedule rather than the stored value.
-  mocks.getCheckpoint.mockImplementation(actual.getCheckpoint);
+  mocks.getCheckpointState.mockImplementation(actual.getCheckpointState);
   mocks.saveCheckpoint.mockImplementation(actual.saveCheckpoint);
 
   return {
     ...actual,
-    getCheckpoint: mocks.getCheckpoint,
+    getCheckpointState: mocks.getCheckpointState,
     saveCheckpoint: mocks.saveCheckpoint,
   };
 });
@@ -262,7 +261,7 @@ describe('backoff on RPC failures (#115)', () => {
     // These cases assert the delay schedule, not what lands in the database,
     // and the checkpoint write on a successful poll would otherwise need a live
     // Postgres. Stub both; the pollOnce cases above keep the real pair.
-    mocks.getCheckpoint.mockResolvedValue(100);
+    mocks.getCheckpointState.mockResolvedValue({ lastLedger: 100 });
     mocks.saveCheckpoint.mockResolvedValue(undefined);
     // Every test here drives the failure path, which logs on purpose.
     vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -270,7 +269,7 @@ describe('backoff on RPC failures (#115)', () => {
 
   it('does not overlap polls when an RPC request takes longer than the interval', async () => {
     process.env.INDEXER_POLL_INTERVAL_MS = '10';
-    mocks.getCheckpoint.mockResolvedValue(100);
+    mocks.getCheckpointState.mockResolvedValue({ lastLedger: 100 });
     mocks.saveCheckpoint.mockResolvedValue(undefined);
     let latestLedger = 100;
     mocks.getLatestLedgerSequence.mockImplementation(async () => ++latestLedger);
@@ -326,7 +325,7 @@ describe('backoff on RPC failures (#115)', () => {
 
   it('waits longer before each retry while the RPC keeps failing', async () => {
     process.env.INDEXER_POLL_INTERVAL_MS = '1000';
-    mocks.getCheckpoint.mockResolvedValue(100);
+    mocks.getCheckpointState.mockResolvedValue({ lastLedger: 100 });
     vi.mocked(mocks.getLatestLedgerSequence).mockRejectedValue(new Error('RPC unreachable'));
 
     const { startIndexer } = await freshIndexer();
@@ -362,7 +361,7 @@ describe('backoff on RPC failures (#115)', () => {
 
   it('resets the delay to the poll interval after a successful poll', async () => {
     process.env.INDEXER_POLL_INTERVAL_MS = '1000';
-    mocks.getCheckpoint.mockResolvedValue(100);
+    mocks.getCheckpointState.mockResolvedValue({ lastLedger: 100 });
     vi.mocked(mocks.getLatestLedgerSequence)
       .mockRejectedValueOnce(new Error('RPC unreachable'))
       .mockRejectedValueOnce(new Error('RPC unreachable'))
@@ -392,5 +391,63 @@ describe('backoff on RPC failures (#115)', () => {
     expect(mocks.getLatestLedgerSequence).toHaveBeenCalledTimes(4);
 
     await stop();
+  });
+});
+
+describe('events-per-poll cap', () => {
+  beforeEach(() => {
+    process.env.DONATION_VAULT_CONTRACT_ID = mocks.contractId;
+    mocks.getEvents.mockReset();
+    mocks.getLatestLedgerSequence.mockReset();
+  });
+
+  afterEach(() => {
+    delete process.env.INDEXER_MAX_EVENTS_PER_POLL;
+  });
+
+  it('resumes after the last event in a capped page, including after restart', async () => {
+    process.env.INDEXER_MAX_EVENTS_PER_POLL = '2';
+    let checkpoint = { lastLedger: 100, lastEventId: undefined as string | undefined };
+    mocks.getCheckpointState.mockImplementation(async () => checkpoint);
+    mocks.saveCheckpoint.mockImplementation(async (lastLedger: number, lastEventId?: string) => {
+      checkpoint = { lastLedger, lastEventId };
+    });
+    mocks.getLatestLedgerSequence.mockResolvedValue(101);
+
+    const events = [
+      makeEvent([], i128ScVal(1n), { id: 'event-1', ledger: 101 }),
+      makeEvent([], i128ScVal(2n), { id: 'event-2', ledger: 101 }),
+      makeEvent([], i128ScVal(3n), { id: 'event-3', ledger: 101 }),
+    ];
+    mocks.getEvents.mockImplementation(async (request) => ({
+      events: 'cursor' in request ? events.slice(2) : events.slice(0, 2),
+    }));
+
+    const handled = vi.fn(async () => {});
+    const { pollOnce } = await freshIndexer();
+    await pollOnce(handled);
+
+    expect(mocks.getEvents).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ startLedger: 101, limit: 2 }),
+    );
+    expect(checkpoint).toEqual({ lastLedger: 101, lastEventId: 'event-2' });
+
+    const restarted = await freshIndexer();
+    await restarted.pollOnce(handled);
+
+    expect(mocks.getEvents).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ cursor: 'event-2', limit: 2 }),
+    );
+    expect(handled.mock.calls).toHaveLength(3);
+    expect(checkpoint).toEqual({ lastLedger: 101, lastEventId: 'event-3' });
+  });
+
+  it('rejects a non-positive cap', async () => {
+    process.env.INDEXER_MAX_EVENTS_PER_POLL = '0';
+    await expect(freshIndexer()).rejects.toThrow(
+      'INDEXER_MAX_EVENTS_PER_POLL must be a positive integer',
+    );
   });
 });

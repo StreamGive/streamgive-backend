@@ -7,7 +7,6 @@ import Fastify from 'fastify';
 import type { FastifyError } from 'fastify';
 
 import { prisma } from './db.js';
-import { getCheckpoint } from './indexer/checkpoint.js';
 import { donorRoutes } from './routes/donors.js';
 import { impactRoutes } from './routes/impact.js';
 import { indexerStatusRoutes } from './routes/indexerStatus.js';
@@ -23,10 +22,7 @@ import { streamRoutes } from './routes/streams.js';
 const USE_PRETTY_LOGS = !['production', 'test'].includes(process.env.NODE_ENV ?? '');
 
 export type TrustProxySetting =
-  | boolean
-  | string
-  | string[]
-  | ((address: string, hop: number) => boolean);
+  boolean | string | string[] | ((address: string, hop: number) => boolean);
 
 /**
  * Parses the TRUST_PROXY environment variable into a valid Fastify trustProxy configuration.
@@ -160,7 +156,11 @@ export function buildServer(options?: BuildServerOptions) {
 
   app.register(swagger, {
     openapi: {
-      info: { title: 'StreamGive API', description: 'API for the StreamGive platform', version: '1.0.0' },
+      info: {
+        title: 'StreamGive API',
+        description: 'API for the StreamGive platform',
+        version: '1.0.0',
+      },
       tags: [
         { name: 'Health', description: 'Service health checks' },
         { name: 'NGOs', description: 'NGO directory and profiles' },
@@ -181,8 +181,8 @@ export function buildServer(options?: BuildServerOptions) {
       getLatestLedgerSequence(),
     ]);
 
-      const db = dbResult.status === 'fulfilled' ? 'ok' : 'error';
-      const rpc = rpcResult.status === 'fulfilled' ? 'ok' : 'error';
+    const db = dbResult.status === 'fulfilled' ? 'ok' : 'error';
+    const rpc = rpcResult.status === 'fulfilled' ? 'ok' : 'error';
 
       const status = db === 'ok' && rpc === 'ok' ? 'ok' : 'error';
       return reply.code(status === 'ok' ? 200 : 503).send({ status, db, rpc });
@@ -220,26 +220,51 @@ export function buildServer(options?: BuildServerOptions) {
   app.addHook('onRoute', (route) => {
     const schemas: Record<string, object> = {
       '/ngos': {
-        tags: ['NGOs'], summary: 'List verified NGOs',
-        querystring: { type: 'object', properties: {
-          limit: { type: 'integer', minimum: 1, maximum: 100, default: 100 },
-          cursor: { type: 'string', format: 'uuid' },
-          sort: { type: 'string', enum: ['newest', 'oldest', 'name'], default: 'newest' },
-          q: { type: 'string', maxLength: 100 },
-        } },
+        tags: ['NGOs'],
+        summary: 'List verified NGOs',
+        querystring: {
+          type: 'object',
+          properties: {
+            limit: { type: 'integer', minimum: 1, maximum: 100, default: 100 },
+            cursor: { type: 'string', format: 'uuid' },
+            sort: { type: 'string', enum: ['newest', 'oldest', 'name'], default: 'newest' },
+            q: { type: 'string', maxLength: 100 },
+          },
+        },
       },
       '/ngos/lookup': {
-        tags: ['NGOs'], summary: 'Find an NGO by Stellar address',
-        querystring: { type: 'object', properties: { address: { type: 'string', pattern: '^G[A-Z2-7]{55}$' } }, required: ['address'] },
+        tags: ['NGOs'],
+        summary: 'Find an NGO by Stellar address',
+        querystring: {
+          type: 'object',
+          properties: { address: { type: 'string', pattern: '^G[A-Z2-7]{55}$' } },
+          required: ['address'],
+        },
       },
       '/ngos/:id/donors': {
-        tags: ['NGOs'], summary: 'List donors for an NGO',
-        params: { type: 'object', properties: { id: { type: 'string', format: 'uuid' } }, required: ['id'] },
-        querystring: { type: 'object', properties: { limit: { type: 'integer', minimum: 1, maximum: 100 }, cursor: { type: 'string', format: 'uuid' } } },
+        tags: ['NGOs'],
+        summary: 'List donors for an NGO',
+        params: {
+          type: 'object',
+          properties: { id: { type: 'string', format: 'uuid' } },
+          required: ['id'],
+        },
+        querystring: {
+          type: 'object',
+          properties: {
+            limit: { type: 'integer', minimum: 1, maximum: 100 },
+            cursor: { type: 'string', format: 'uuid' },
+          },
+        },
       },
       '/ngos/:id': {
-        tags: ['NGOs'], summary: 'Get an NGO profile and impact totals',
-        params: { type: 'object', properties: { id: { type: 'string', format: 'uuid' } }, required: ['id'] },
+        tags: ['NGOs'],
+        summary: 'Get an NGO profile and impact totals',
+        params: {
+          type: 'object',
+          properties: { id: { type: 'string', format: 'uuid' } },
+          required: ['id'],
+        },
       },
     };
     const schema = schemas[route.url];
