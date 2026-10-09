@@ -1,6 +1,7 @@
 import { createHmac } from 'node:crypto';
 
 import { prisma } from '../db.js';
+import { recordNotificationDelivery } from '../metrics.js';
 import type { NotificationEvent } from './types.js';
 
 const deliveredEventIds = new Set<string>();
@@ -64,15 +65,14 @@ async function notifyWebhook(event: NotificationEvent): Promise<void> {
       success = true;
     } else {
       error = `status ${res.status}`;
-      console.error(
-        `webhook notification failed with status ${res.status} for ${webhookUrl}`,
-      );
+      console.error(`webhook notification failed with status ${res.status} for ${webhookUrl}`);
     }
   } catch (err) {
     error = err instanceof Error ? err.message : String(err);
     console.error('webhook notification failed', err);
   }
 
+  recordNotificationDelivery(success ? 'success' : 'failure');
   await prisma.notificationLog.create({
     data: { eventType: event.type, channel: 'webhook', success, error },
   });

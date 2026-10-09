@@ -7,6 +7,8 @@ import Fastify from 'fastify';
 import type { FastifyError } from 'fastify';
 
 import { prisma } from './db.js';
+import { recordHttpRequest, renderMetrics } from './metrics.js';
+import { getCheckpoint } from './indexer/checkpoint.js';
 import { donorRoutes } from './routes/donors.js';
 import { impactRoutes } from './routes/impact.js';
 import { indexerStatusRoutes } from './routes/indexerStatus.js';
@@ -72,6 +74,7 @@ export interface BuildServerOptions {
 }
 
 export function buildServer(options?: BuildServerOptions) {
+  const requestStartedAt = new WeakMap<object, bigint>();
   const trustProxySetting =
     options?.trustProxy !== undefined
       ? options.trustProxy
@@ -163,6 +166,26 @@ export function buildServer(options?: BuildServerOptions) {
       'x-ratelimit-reset': true,
       'retry-after': true,
     },
+  });
+
+  app.addHook('onRequest', async (request) => {
+    requestStartedAt.set(request, process.hrtime.bigint());
+  });
+
+  app.addHook('onResponse', async (request, reply) => {
+    const startedAt = requestStartedAt.get(request);
+    if (startedAt === undefined) return;
+    const durationSeconds = Number(process.hrtime.bigint() - startedAt) / 1_000_000_000;
+    recordHttpRequest(
+      request.method,
+      request.routeOptions.url ?? 'unmatched',
+      reply.statusCode,
+      durationSeconds,
+    );
+  });
+
+  app.get('/metrics', async (_request, reply) => {
+    return reply.type('text/plain; version=0.0.4; charset=utf-8').send(renderMetrics());
   });
 
   app.register(swagger, {

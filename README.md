@@ -16,6 +16,12 @@ Every HTTP API route is mounted under `/v1`, including health and admin routes.
 For example: `GET /v1/health`, `GET /v1/ngos`, `GET /v1/streams`, and
 `GET /v1/indexer/status`.
 
+## Prometheus metrics
+
+`GET /metrics` returns Prometheus text format (`text/plain; version=0.0.4`).
+It exposes HTTP request totals and duration, indexer checkpoint and lag, and webhook
+delivery totals. Configure Prometheus to scrape it on the API host and port.
+
 ## NGO Verification Model
 
 An NGO's verified status consists of two distinct steps kept deliberately separate:
