@@ -16,6 +16,7 @@ import { getLatestLedgerSequence } from './stellar/rpc.js';
 import { ngoApplicationRoutes } from './routes/ngoApplications.js';
 import { ngoRoutes } from './routes/ngos.js';
 import { streamRoutes } from './routes/streams.js';
+import { registerRequestIdHeader, requestIdOptions } from './requestId.js';
 
 // pino-pretty runs its formatting on a separate worker thread; spawning
 // one per Fastify instance is fine for a single long-running process, but
@@ -80,6 +81,7 @@ export function buildServer(options?: BuildServerOptions) {
       : parseTrustProxy(process.env.TRUST_PROXY);
 
   const app = Fastify({
+    ...requestIdOptions,
     logger: {
       level: process.env.LOG_LEVEL ?? 'info',
       // Structured JSON otherwise (production: for log aggregation; test:
@@ -95,6 +97,8 @@ export function buildServer(options?: BuildServerOptions) {
     // limiting per client IP.
     trustProxy: trustProxySetting,
   });
+
+  registerRequestIdHeader(app);
 
   app.setErrorHandler((error: FastifyError, request, reply) => {
     request.log.error(error);
@@ -139,7 +143,14 @@ export function buildServer(options?: BuildServerOptions) {
   app.register(cors, {
     origin: allowedOrigins,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['content-type', 'x-admin-address', 'x-admin-signature', 'x-admin-timestamp'],
+    allowedHeaders: [
+      'content-type',
+      'x-admin-address',
+      'x-admin-signature',
+      'x-admin-timestamp',
+      'x-request-id',
+    ],
+    exposedHeaders: ['x-request-id'],
   });
 
   app.register(rateLimit, {
