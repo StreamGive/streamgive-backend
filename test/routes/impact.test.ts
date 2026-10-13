@@ -143,6 +143,7 @@ describe('GET /v1/impact/:ngoId', () => {
 
     const response = await app.inject({ method: 'GET', url: '/v1/impact/not-a-uuid' });
     expect(response.statusCode).toBe(400);
+    expect(response.json()).toEqual({ error: 'invalid_request' });
 
     await app.close();
   });
