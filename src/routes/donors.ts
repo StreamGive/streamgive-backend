@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 
 import { prisma } from '../db.js';
+import { stellarPublicKeySchema } from '../stellar/validation.js';
 
 const querySchema = z.object({
   sort: z.enum(['committed', 'withdrawn']).default('committed'),
@@ -10,9 +11,8 @@ const querySchema = z.object({
   cursor: z.string().uuid().optional(),
 });
 
-// Stellar StrKey ed25519 public key: 'G' + 55 base32 (A-Z2-7) chars.
 const addressParamSchema = z.object({
-  address: z.string().regex(/^G[A-Z2-7]{55}$/),
+  address: stellarPublicKeySchema,
 });
 
 export async function donorRoutes(app: FastifyInstance): Promise<void> {

@@ -2,7 +2,12 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import { prisma } from '../../src/db.js';
 import { buildServer } from '../../src/server.js';
-import { fakeAddress, fakeContractAddress, resetDb } from '../helpers/db.js';
+import {
+  fakeAddress,
+  fakeAddressWithBadChecksum,
+  fakeContractAddress,
+  resetDb,
+} from '../helpers/db.js';
 
 describe('GET /v1/streams', () => {
   afterEach(async () => {
@@ -57,11 +62,17 @@ describe('GET /v1/streams', () => {
     await app.close();
   });
 
-  it('400s on a malformed donor address instead of matching nothing silently', async () => {
+  it('400s on checksum-invalid donor and NGO addresses instead of matching nothing silently', async () => {
     const app = buildServer();
+    const address = fakeAddressWithBadChecksum('V');
 
-    const response = await app.inject({ method: 'GET', url: '/v1/streams?donor=not-an-address' });
-    expect(response.statusCode).toBe(400);
+    for (const parameter of ['donor', 'ngoAddress']) {
+      const response = await app.inject({
+        method: 'GET',
+        url: `/v1/streams?${parameter}=${address}`,
+      });
+      expect(response.statusCode).toBe(400);
+    }
 
     await app.close();
   });

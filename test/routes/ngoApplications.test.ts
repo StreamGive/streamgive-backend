@@ -6,7 +6,7 @@ vi.mock('../../src/notifications/service.js', () => ({ notify: vi.fn() }));
 import { prisma } from '../../src/db.js';
 import { buildServer } from '../../src/server.js';
 import { notify } from '../../src/notifications/service.js';
-import { fakeAddress, resetDb } from '../helpers/db.js';
+import { fakeAddress, fakeAddressWithBadChecksum, resetDb } from '../helpers/db.js';
 import { signAdminRequest } from '../helpers/adminAuth.js';
 
 const adminKeypair = Keypair.random();
@@ -96,16 +96,18 @@ describe('POST /v1/ngo-applications', () => {
     await app.close();
   });
 
-  it('rejects a malformed ownerAddress with 400', async () => {
+  it('rejects a correctly shaped ownerAddress with an invalid checksum', async () => {
     const app = buildServer();
+    const ownerAddress = fakeAddressWithBadChecksum('W');
 
     const response = await app.inject({
       method: 'POST',
       url: '/v1/ngo-applications',
-      payload: validApplicationPayload({ ownerAddress: 'invalid-stellar-address' }),
+      payload: validApplicationPayload({ ownerAddress }),
     });
 
     expect(response.statusCode).toBe(400);
+    expect(await prisma.ngoApplication.findMany({ where: { ownerAddress } })).toHaveLength(0);
 
     await app.close();
   });
@@ -227,12 +229,13 @@ describe('GET /v1/ngo-applications/status', () => {
     await app.close();
   });
 
-  it('rejects a malformed address with 400', async () => {
+  it('rejects a correctly shaped address with an invalid checksum', async () => {
     const app = buildServer();
+    const ownerAddress = fakeAddressWithBadChecksum('X');
 
     const response = await app.inject({
       method: 'GET',
-      url: '/v1/ngo-applications/status?ownerAddress=not-an-address',
+      url: `/v1/ngo-applications/status?ownerAddress=${ownerAddress}`,
     });
 
     expect(response.statusCode).toBe(400);
