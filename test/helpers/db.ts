@@ -30,6 +30,13 @@ export function fakeAddress(distinguishingChar: string): string {
   const seed = Buffer.alloc(32, distinguishingChar.toUpperCase().charCodeAt(0));
   return Keypair.fromRawEd25519Seed(seed).publicKey();
 }
+
+export function fakeAddressWithBadChecksum(distinguishingChar: string): string {
+  const address = fakeAddress(distinguishingChar);
+  const finalCharacter = address.at(-1) === 'A' ? 'B' : 'A';
+  return `${address.slice(0, -1)}${finalCharacter}`;
+}
+
 /** A checksum-valid Stellar contract address derived deterministically for tests. */
 export function fakeContractAddress(distinguishingChar: string): string {
   const contractId = Buffer.alloc(32, distinguishingChar.toUpperCase().charCodeAt(0));

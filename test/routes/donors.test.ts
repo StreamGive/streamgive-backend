@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import { prisma } from '../../src/db.js';
 import { buildServer } from '../../src/server.js';
-import { fakeAddress, resetDb } from '../helpers/db.js';
+import { fakeAddress, fakeAddressWithBadChecksum, resetDb } from '../helpers/db.js';
 
 describe('GET /v1/donors', () => {
   afterEach(async () => {
@@ -214,9 +214,10 @@ describe('GET /v1/donors/:address', () => {
     await app.close();
   });
 
-  it('returns 400 for a malformed address', async () => {
+  it('returns 400 for an address with an invalid checksum', async () => {
     const app = buildServer();
-    const response = await app.inject({ method: 'GET', url: '/v1/donors/not-an-address' });
+    const address = fakeAddressWithBadChecksum('Q');
+    const response = await app.inject({ method: 'GET', url: `/v1/donors/${address}` });
     expect(response.statusCode).toBe(400);
     await app.close();
   });

@@ -4,9 +4,10 @@ import { z } from 'zod';
 import { prisma } from '../db.js';
 import { requireAdminSignature } from '../middleware/adminAuth.js';
 import { notify } from '../notifications/service.js';
+import { stellarPublicKeySchema } from '../stellar/validation.js';
 
 const applicationSchema = z.object({
-  ownerAddress: z.string().regex(/^G[A-Z2-7]{55}$/),
+  ownerAddress: stellarPublicKeySchema,
   name: z.string().min(1).max(200),
   description: z.string().min(1).max(5000),
   // Normalize scheme-less domains (e.g. "example.org") to "https://example.org"
@@ -29,9 +30,7 @@ const listQuerySchema = z.object({
 const idParamSchema = z.object({ id: z.string().uuid() });
 
 const statusQuerySchema = z.object({
-  // Stellar StrKey ed25519 public key: 'G' + 55 base32 (A-Z2-7) chars.
-  // Same regex as GET /ngos/lookup.
-  ownerAddress: z.string().regex(/^G[A-Z2-7]{55}$/),
+  ownerAddress: stellarPublicKeySchema,
 });
 
 const reviewBodySchema = z.object({

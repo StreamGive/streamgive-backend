@@ -3,20 +3,14 @@ import { StrKey } from '@stellar/stellar-sdk';
 import { z } from 'zod';
 
 import { prisma } from '../db.js';
+import { stellarPublicKeySchema } from '../stellar/validation.js';
 import { sendPublicCacheable } from './cacheable.js';
 
 const querySchema = z.object({
-  // Stellar StrKey ed25519 public key: 'G' + 55 base32 (A-Z2-7) chars.
-  donor: z
-    .string()
-    .regex(/^G[A-Z2-7]{55}$/)
-    .optional(),
+  donor: stellarPublicKeySchema.optional(),
   ngo: z.string().uuid().optional(),
   // Filter by the NGO's Stellar wallet address instead of its internal UUIT.
-  ngoAddress: z
-    .string()
-    .regex(/^G[A-Z2-7]{55}$/)
-    .optional(),
+  ngoAddress: stellarPublicKeySchema.optional(),
   token: z
     .string()
     .refine((value) => StrKey.isValidContract(value), {

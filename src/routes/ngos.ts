@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { prisma } from '../db.js';
 import { sendPublicCacheable } from './cacheable.js';
 import { requireAdminSignature } from '../middleware/adminAuth.js';
+import { stellarPublicKeySchema } from '../stellar/validation.js';
 
 const idParamSchema = z.object({ id: z.string().uuid() });
 const RECENT_STREAMS_LIMIT = 10;
@@ -38,10 +39,7 @@ function committedAmount(stream: {
 }
 
 const lookupQuerySchema = z.object({
-  // Stellar StrKey ed25519 public key: 'G' + 55 base32 (A-Z2-7) chars.
-  address: z
-    .string()
-    .regex(/^G[A-Z2-7]{55}$/),
+  address: stellarPublicKeySchema,
 });
 
 const adminListQuerySchema = z.object({
