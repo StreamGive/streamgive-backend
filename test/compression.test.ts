@@ -1,11 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import Fastify from 'fastify';
 import { gunzipSync } from 'node:zlib';
-import { registerCompression } from '../src/plugins/compression.js';
+import { buildServer } from '../src/server.js';
 
 async function build() {
-  const app = Fastify();
-  await registerCompression(app);
+  const app = buildServer();
+  await app.after();
   app.get('/big', async () => ({
     items: Array.from({ length: 500 }, (_, i) => ({ id: i, name: `ngo-${i}` })),
   }));

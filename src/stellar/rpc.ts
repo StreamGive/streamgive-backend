@@ -1,3 +1,12 @@
+import {
+  Account,
+  Contract,
+  Keypair,
+  Networks,
+  scValToNative,
+  TransactionBuilder,
+  type xdr,
+} from '@stellar/stellar-sdk';
 import { Server } from '@stellar/stellar-sdk/rpc';
 
 const SOROBAN_RPC_URL = process.env.SOROBAN_RPC_URL ?? 'https://soroban-testnet.stellar.org';
@@ -14,34 +23,29 @@ export async function getLatestLedgerSequence(): Promise<number> {
 export async function callContract<T>(
   contractId: string,
   method: string,
-  args: unknown[] = [],
+  args: xdr.ScVal[] = [],
 ): Promise<T> {
-  const { Contract, TransactionBuilder, Account, Keypoint, NativeAsset, xdr } = await import('@stellar/stellar-sdk');
-  const { send: sendRequest } = await import('@stellar/stellar-sdk/rpc');
-
-  const source = new Account(Keypoint.random().publicKey(), '0');
+  const source = new Account(Keypair.random().publicKey(), '0');
   const contract = new Contract(contractId);
 
   const tx = new TransactionBuilder(source, {
     fee: '100',
-    networkPassphrase: process.env.STELLAR_NETWORK_PASSPHRASE ?? 'Test Stellar Network ; February 2019',
+    networkPassphrase: process.env.STELLAR_NETWORK_PASSPHRASE ?? Networks.TESTNET,
   })
     .addOperation(contract.call(method, ...args))
     .setTimeout(0)
     .build();
 
-  const sim = await sendRequest(rpcServer, tx, {
-    simulate: true,
-  });
+  const sim = await rpcServer.simulateTransaction(tx);
 
-  if (sim.error) {
+  if ('error' in sim) {
     throw new Error(`Soroban simulation failed: ${sim.error}`);
   }
 
-  const retVal = sim.result?.retval;
+  const retVal = 'result' in sim ? sim.result?.retval : undefined;
   if (!retVal) {
     throw new Error('Soroban simulation returned no return value');
   }
 
-  return xdr.scUalignedScpyValTo.call(retVal);
+  return scValToNative(retVal) as T;
 }

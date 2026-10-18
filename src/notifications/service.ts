@@ -7,6 +7,10 @@ import type { NotificationEvent } from './types.js';
 const deliveredEventIds = new Set<string>();
 const MAX_DELIVERED_EVENT_IDS = 10_000;
 
+export function _resetDeliveredEventIdsForTest(): void {
+  deliveredEventIds.clear();
+}
+
 /**
  * Header carrying an HMAC-SHA256 of the request body, keyed with
  * `NOTIFY_WEBHOOK_SECRET`, so a receiver can tell a real notification from
@@ -26,13 +30,13 @@ function getWebhookTimeoutMs(): number {
 
 /** Real (if NOTIFY_WEBHOOK_URL is set): POSTs the event as JSON. Node's
  * built-in fetch means this needs no extra dependency. */
-async function notifyWebhook(event: NotificationEvent): Promise<void> {
+async function notifyWebhook(event: NotificationEvent): Promise<boolean> {
   // Deliberately read per call rather than captured at module load: hoisting
   // this to a module-level constant freezes the URL at import time, so a
   // value set (or rotated) later in the process lifetime would be ignored
   // until a restart. test/notifications/service.test.ts guards this.
   const webhookUrl = process.env.NOTIFY_WEBHOOK_URL;
-  if (!webhookUrl) return;
+  if (!webhookUrl) return true;
 
   // Serialised once and reused as both the signed input and the request
   // body. Signing a second `JSON.stringify(event)` would work today but
@@ -73,9 +77,22 @@ async function notifyWebhook(event: NotificationEvent): Promise<void> {
   }
 
   recordNotificationDelivery(success ? 'success' : 'failure');
-  await prisma.notificationLog.create({
-    data: { eventType: event.type, channel: 'webhook', success, error },
-  });
+
+  try {
+    await prisma.notificationLog.create({
+      data: {
+        eventId: success ? event.eventId : null,
+        eventType: event.type,
+        channel: 'webhook',
+        success,
+        error,
+      },
+    });
+  } catch (err) {
+    console.error('failed to write notification log', err);
+  }
+
+  return success;
 }
 
 /** Stub: no email provider wired up yet — picking one (SendGrid, Postmark,
@@ -85,19 +102,70 @@ async function notifyWebhook(event: NotificationEvent): Promise<void> {
 async function notifyEmail(event: NotificationEvent): Promise<void> {
   console.log('[notify:email:stub]', event);
 
-  await prisma.notificationLog.create({
-    data: { eventType: event.type, channel: 'email', success: true },
-  });
+  try {
+    await prisma.notificationLog.create({
+      data: {
+        eventType: event.type,
+        channel: 'email',
+        success: true,
+      },
+    });
+  } catch (err) {
+    console.error('failed to write email notification log', err);
+  }
 }
 
 export async function notify(event: NotificationEvent): Promise<void> {
-  if (event.eventId && deliveredEventIds.has(event.eventId)) return;
   if (event.eventId) {
+    if (deliveredEventIds.has(event.eventId)) return;
+
+    try {
+      const persisted = await prisma.notificationLog.findFirst({
+        where: { eventId: event.eventId, success: true },
+      });
+      if (persisted) {
+        deliveredEventIds.add(event.eventId);
+        return;
+      }
+    } catch (err) {
+      console.error('failed to check persisted notification delivery', err);
+    }
+  }
+
+  const [webhookSuccess] = await Promise.all([notifyWebhook(event), notifyEmail(event)]);
+
+  // Mark delivered only after successful delivery
+  if (event.eventId && webhookSuccess) {
     deliveredEventIds.add(event.eventId);
     if (deliveredEventIds.size > MAX_DELIVERED_EVENT_IDS) {
       const oldest = deliveredEventIds.values().next().value;
       if (oldest) deliveredEventIds.delete(oldest);
     }
+
+    if (!process.env.NOTIFY_WEBHOOK_URL) {
+      try {
+        await prisma.notificationLog.create({
+          data: {
+            eventId: event.eventId,
+            eventType: event.type,
+            channel: 'webhook',
+            success: true,
+          },
+        });
+      } catch (err) {
+        console.error('failed to persist delivery record', err);
+      }
+    }
   }
-  await Promise.all([notifyWebhook(event), notifyEmail(event)]);
+}
+
+/**
+ * Dispatches a notification asynchronously after transaction commit,
+ * ensuring any errors are caught and do not propagate back into the handler
+ * or block the indexer.
+ */
+export function dispatchNotification(event: NotificationEvent): void {
+  notify(event).catch((err) => {
+    console.error('asynchronous notification dispatch failed', err);
+  });
 }

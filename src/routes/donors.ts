@@ -4,6 +4,11 @@ import { z } from 'zod';
 import { prisma } from '../db.js';
 import { stellarPublicKeySchema } from '../stellar/validation.js';
 
+/**
+ * Query for GET /v1/donors: `sort` is committed or withdrawn (default
+ * committed), `order` is asc or desc (default desc), `limit` is 1–100
+ * (default 100), and `cursor` is an optional donor UUID.
+ */
 const querySchema = z.object({
   sort: z.enum(['committed', 'withdrawn']).default('committed'),
   order: z.enum(['asc', 'desc']).default('desc'),
@@ -11,11 +16,20 @@ const querySchema = z.object({
   cursor: z.string().uuid().optional(),
 });
 
+// Stellar StrKey ed25519 public key: 'G' + 55 base32 (A-Z2-7) chars.
+/** Params for GET /v1/donors/:address; `address` must match a Stellar G... public key. */
 const addressParamSchema = z.object({
   address: stellarPublicKeySchema,
 });
 
 export async function donorRoutes(app: FastifyInstance): Promise<void> {
+  /**
+   * Lists donors ranked by committed or withdrawn amount.
+   * @route GET /v1/donors
+   * @query sort, order, limit, cursor
+   * @auth Public
+   * @returns 200 `{ donors: DonorWithTotals[], nextCursor: string | null }`; 400 `{ error: "invalid_request" }` for invalid query or cursor.
+   */
   app.get('/donors', async (request, reply) => {
     const parsedQuery = querySchema.safeParse(request.query);
     if (!parsedQuery.success) {
@@ -76,6 +90,13 @@ export async function donorRoutes(app: FastifyInstance): Promise<void> {
 
   // Per-donor summary so the dashboard (and other clients) can show donor
   // stats without paging through every stream and summing in the browser.
+  /**
+   * Returns one donor's aggregate giving statistics.
+   * @route GET /v1/donors/:address
+   * @param address Stellar public key
+   * @auth Public
+   * @returns 200 donor with decimal-string `totalCommitted` and `totalWithdrawn`, plus `activeStreamCount` and `distinctNgoCount`; 400 invalid address; 404 `{ error: "not_found" }`.
+   */
   app.get('/donors/:address', async (request, reply) => {
     const parsedParams = addressParamSchema.safeParse(request.params);
     if (!parsedParams.success) {

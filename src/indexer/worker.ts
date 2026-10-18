@@ -51,6 +51,55 @@ function isLedgerOutOfRange(err: unknown): boolean {
 }
 
 /**
+ * Distinguishes permanent event shape, decode, and validation errors from
+ * transient operational errors (e.g. database blips, timeouts, connection drops).
+ *
+ * Permanent errors are dead-lettered and skipped so the checkpoint can advance.
+ * Transient errors are re-thrown so the worker retries them with backoff without
+ * advancing the checkpoint.
+ */
+export function isDecodeOrValidationError(err: unknown): boolean {
+  if (err instanceof TypeError || err instanceof RangeError || err instanceof SyntaxError) {
+    return true;
+  }
+  if (err instanceof Error) {
+    const name = err.name.toLowerCase();
+    if (name.includes('validation') || name.includes('zod') || name.includes('decode')) {
+      return true;
+    }
+    const msg = err.message.toLowerCase();
+    if (
+      msg.includes('transient') ||
+      msg.includes('timeout') ||
+      msg.includes('connection') ||
+      msg.includes('econnrefused') ||
+      msg.includes('database') ||
+      msg.includes('deadlock') ||
+      msg.includes('network') ||
+      msg.includes('econnreset') ||
+      msg.includes('socket') ||
+      msg.includes('service_unavailable')
+    ) {
+      return false;
+    }
+    if (
+      msg.includes('scval') ||
+      msg.includes('xdr') ||
+      msg.includes('strkey') ||
+      msg.includes('decode') ||
+      msg.includes('validation') ||
+      msg.includes('unknown stream') ||
+      msg.includes('not iterable') ||
+      msg.includes('malformed') ||
+      msg.includes('cannot read properties')
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
  * How long to wait before the poll that follows `consecutiveFailures`
  * consecutive poll failures.
  *
@@ -161,23 +210,21 @@ export async function pollOnce(handleEvent: EventHandler): Promise<void> {
     try {
       await handleEvent(event);
     } catch (err: unknown) {
-      // A handler that throws used to pin the checkpoint: the same event
-      // came back on every poll and nothing after it was ever indexed. The
-      // handlers decode event payloads with unchecked casts, so any event
-      // whose shape doesn't match is permanently poisonous — retrying it
-      // will never succeed, it just stops the indexer making progress.
-      // Record it and carry on instead.
-      //
-      // recordDeadLetter() is deliberately left unguarded. If it throws,
-      // the database is unreachable rather than the event being bad, and
-      // letting that propagate leaves the checkpoint unmoved so the event
-      // is retried on the next poll instead of skipped over a blip.
-      console.error(
-        `indexer: event ${event.id} at ledger ${event.ledger} could not be` +
-          ` processed — recording it as a dead letter and skipping it`,
-        err,
-      );
-      await recordDeadLetter(event, err);
+      if (isDecodeOrValidationError(err)) {
+        console.error(
+          `indexer: event ${event.id} at ledger ${event.ledger} could not be` +
+            ` processed (decode/validation error) — recording it as a dead letter and skipping it`,
+          err,
+        );
+        await recordDeadLetter(event, err);
+      } else {
+        console.error(
+          `indexer: handler failed transiently for event ${event.id} at ledger ${event.ledger} — ` +
+            `will retry with backoff without advancing checkpoint`,
+          err,
+        );
+        throw err;
+      }
     }
 
     // Saved per-event, not once per batch: several handlers apply relative

@@ -17,6 +17,7 @@ import { ngoApplicationRoutes } from './routes/ngoApplications.js';
 import { ngoRoutes } from './routes/ngos.js';
 import { streamRoutes } from './routes/streams.js';
 import { registerRequestIdHeader, requestIdOptions } from './requestId.js';
+import { registerCompression } from './plugins/compression.js';
 
 // pino-pretty runs its formatting on a separate worker thread; spawning
 // one per Fastify instance is fine for a single long-running process, but
@@ -99,6 +100,7 @@ export function buildServer(options?: BuildServerOptions) {
   });
 
   registerRequestIdHeader(app);
+  app.register(registerCompression);
 
   app.setErrorHandler((error: FastifyError, request, reply) => {
     request.log.error(error);
@@ -117,7 +119,13 @@ export function buildServer(options?: BuildServerOptions) {
         ? 'not_found'
         : statusCode === 400
           ? 'invalid_request'
-          : 'internal_server_error';
+          : statusCode === 413
+            ? 'payload_too_large'
+            : statusCode === 415
+              ? 'unsupported_media_type'
+              : statusCode === 429
+                ? 'rate_limited'
+                : 'internal_server_error';
     reply.code(statusCode).send({ error: errorString });
   });
 
@@ -184,6 +192,12 @@ export function buildServer(options?: BuildServerOptions) {
     );
   });
 
+  /**
+   * Exposes process-local Prometheus metrics.
+   * @route GET /metrics
+   * @auth Public
+   * @returns 200 Prometheus text format (`text/plain; version=0.0.4`).
+   */
   app.get('/metrics', async (_request, reply) => {
     return reply.type('text/plain; version=0.0.4; charset=utf-8').send(renderMetrics());
   });
@@ -209,6 +223,12 @@ export function buildServer(options?: BuildServerOptions) {
     });
   }
 
+  /**
+   * Checks database and Stellar RPC availability.
+   * @route GET /health
+   * @auth Public
+   * @returns 200 or 503 `{ status: "ok" | "error", db: "ok" | "error", rpc: "ok" | "error" }`.
+   */
   app.get('/health', async (_req, reply) => {
     const [dbResult, rpcResult] = await Promise.allSettled([
       prisma.$queryRaw`SELECT 1`,
@@ -222,6 +242,12 @@ export function buildServer(options?: BuildServerOptions) {
       return reply.code(status === 'ok' ? 200 : 503).send({ status, db, rpc });
   });
 
+  /**
+   * Checks readiness, including database availability and indexer lag.
+   * @route GET /health/ready
+   * @auth Public
+   * @returns 200 `{ status: "ok", lag, latestLedger, checkpointLedger }`; 503 `{ status: "error", reason, ... }` when unavailable or not caught up.
+   */
   app.get('/health/ready', async (request, reply) => {
     try {
       // 1. Check DB
@@ -253,7 +279,7 @@ export function buildServer(options?: BuildServerOptions) {
 
   app.addHook('onRoute', (route) => {
     const schemas: Record<string, object> = {
-      '/ngos': {
+      '/v1/ngos': {
         tags: ['NGOs'],
         summary: 'List verified NGOs',
         querystring: {
@@ -266,7 +292,7 @@ export function buildServer(options?: BuildServerOptions) {
           },
         },
       },
-      '/ngos/lookup': {
+      '/v1/ngos/lookup': {
         tags: ['NGOs'],
         summary: 'Find an NGO by Stellar address',
         querystring: {
@@ -275,7 +301,7 @@ export function buildServer(options?: BuildServerOptions) {
           required: ['address'],
         },
       },
-      '/ngos/:id/donors': {
+      '/v1/ngos/:id/donors': {
         tags: ['NGOs'],
         summary: 'List donors for an NGO',
         params: {
@@ -291,7 +317,7 @@ export function buildServer(options?: BuildServerOptions) {
           },
         },
       },
-      '/ngos/:id': {
+      '/v1/ngos/:id': {
         tags: ['NGOs'],
         summary: 'Get an NGO profile and impact totals',
         params: {

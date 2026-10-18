@@ -1,3 +1,5 @@
+import { xdr } from '@stellar/stellar-sdk';
+
 import { prisma } from '../db.js';
 import type { ContractEvent } from './worker.js';
 
@@ -9,6 +11,44 @@ function describeError(err: unknown): string {
   return text.slice(0, MAX_ERROR_LENGTH);
 }
 
+function serializeScValToXDR(val: unknown): string {
+  if (val && typeof (val as { toXDR: (format?: string) => string | Buffer }).toXDR === 'function') {
+    const res = (val as { toXDR: (format: string) => string }).toXDR('base64');
+    return typeof res === 'string' ? res : Buffer.from(res).toString('base64');
+  }
+  return String(val);
+}
+
+export interface RebuiltEvent {
+  id: string;
+  ledger: number;
+  contractId: string | null;
+  txHash: string | null;
+  topic: xdr.ScVal[];
+  value: xdr.ScVal | null;
+}
+
+/**
+ * Rebuilds the contract event from stored dead letter XDR payloads for replay.
+ */
+export function rebuildEventFromDeadLetter(deadLetter: {
+  eventId: string;
+  ledger: number;
+  contractId: string | null;
+  txHash?: string | null;
+  topic: string[];
+  value: string | null;
+}): RebuiltEvent {
+  return {
+    id: deadLetter.eventId,
+    ledger: deadLetter.ledger,
+    contractId: deadLetter.contractId,
+    txHash: deadLetter.txHash ?? null,
+    topic: (deadLetter.topic ?? []).map((xdrStr) => xdr.ScVal.fromXDR(xdrStr, 'base64')),
+    value: deadLetter.value ? xdr.ScVal.fromXDR(deadLetter.value, 'base64') : null,
+  };
+}
+
 /**
  * Records an event the indexer failed to process, so the caller can move the
  * checkpoint past it instead of retrying it on every poll forever.
@@ -16,7 +56,7 @@ function describeError(err: unknown): string {
  * Upsert rather than create: the unique `eventId` is the whole point of the
  * row, and a duplicate insert throwing here would reintroduce exactly the
  * wedge this table exists to prevent (a manual replay that fails again, say).
- * The newest error message wins.
+ * The newest error message wins, and attempts are incremented.
  *
  * Deliberately *not* fault-tolerant — if this write throws, the database is
  * unreachable, which is a transient fault rather than a bad event. Letting it
@@ -25,6 +65,11 @@ function describeError(err: unknown): string {
  */
 export async function recordDeadLetter(event: ContractEvent, err: unknown): Promise<void> {
   const error = describeError(err);
+  const topic = Array.isArray(event.topic)
+    ? event.topic.map((item) => serializeScValToXDR(item))
+    : [];
+  const value = event.value !== undefined ? serializeScValToXDR(event.value) : null;
+  const txHash = event.txHash ?? null;
 
   await prisma.indexerDeadLetter.upsert({
     where: { eventId: event.id },
@@ -33,7 +78,17 @@ export async function recordDeadLetter(event: ContractEvent, err: unknown): Prom
       ledger: event.ledger,
       contractId: event.contractId?.toString() ?? null,
       error,
+      topic,
+      value,
+      txHash,
+      attempts: 1,
     },
-    update: { error },
+    update: {
+      error,
+      topic,
+      value,
+      txHash,
+      attempts: { increment: 1 },
+    },
   });
 }

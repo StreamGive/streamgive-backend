@@ -143,6 +143,7 @@ describe('GET /v1/impact/:ngoId', () => {
 
     const response = await app.inject({ method: 'GET', url: '/v1/impact/not-a-uuid' });
     expect(response.statusCode).toBe(400);
+    expect(response.json()).toEqual({ error: 'invalid_request' });
 
     await app.close();
   });
@@ -163,13 +164,19 @@ describe('GET /v1/impact/:ngoId', () => {
     const app = buildServer();
 
     const ngo = await prisma.ngo.create({
-      data: { ownerAddress: fakeAddress('A'), name: 'Empty NGO', verified: true },
+      data: {
+        ownerAddress: fakeAddress('A'),
+        name: 'Empty NGO',
+        displayName: 'Community Fund',
+        verified: true,
+      },
     });
 
     const response = await app.inject({ method: 'GET', url: `/v1/impact/${ngo.id}` });
     expect(response.statusCode).toBe(200);
 
     const body = response.json();
+    expect(body.name).toBe('Community Fund');
     expect(body.platformSharePercent).toBe(0);
     expect(body.totalCommitted).toBe('0');
     expect(body.activeStreams).toBe(0);

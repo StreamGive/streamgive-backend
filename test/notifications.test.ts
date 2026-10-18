@@ -34,11 +34,14 @@ describe('notification service', () => {
     await notify(event);
 
     expect(fetchSpy).toHaveBeenCalledTimes(1);
-    expect(fetchSpy).toHaveBeenCalledWith(webhookUrl, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(event),
-    });
+    expect(fetchSpy).toHaveBeenCalledWith(
+      webhookUrl,
+      expect.objectContaining({
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(event),
+      }),
+    );
   });
 
   it('does not throw or block notify() when webhook request fails', async () => {

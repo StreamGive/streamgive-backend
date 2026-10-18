@@ -45,11 +45,11 @@ placeholder in at step 1 and correct it at step 3.
 
 ## Database schema
 
-The app does not migrate on boot. Push the schema from a machine that has
+The app does not migrate on boot. Deploy committed migrations from a machine that has
 `DATABASE_URL` set:
 
 ```sh
-npx prisma db push
+npx prisma migrate deploy
 ```
 
 ## Keeping it awake
@@ -86,9 +86,10 @@ whole allowance. That budget covers **one** free service, not several.
 
 This is particularly important because the current deployment documentation explicitly says:
 
-> The app does not migrate on boot. Push the schema from a machine that has `DATABASE_URL` set.
+> The app does not migrate on boot. Deploy committed migrations from a machine that has `DATABASE_URL` set.
 
 and then:
 
 ```bash
-npx prisma db push
+npx prisma migrate deploy
+```

@@ -20,7 +20,12 @@ describe('GET /v1/streams', () => {
     const donorA = await prisma.donor.create({ data: { address: fakeAddress('A') } });
     const donorB = await prisma.donor.create({ data: { address: fakeAddress('B') } });
     const ngo = await prisma.ngo.create({
-      data: { ownerAddress: fakeAddress('C'), name: 'NGO', verified: true },
+      data: {
+        ownerAddress: fakeAddress('C'),
+        name: 'NGO',
+        displayName: 'Public NGO Name',
+        verified: true,
+      },
     });
 
     await prisma.stream.create({
@@ -55,6 +60,7 @@ describe('GET /v1/streams', () => {
     const body = response.json();
     expect(body.streams).toHaveLength(1);
     expect(body.streams[0].onChainId).toBe('1');
+    expect(body.streams[0].ngo.name).toBe('Public NGO Name');
     // Serialized as a string — the route must never hand back a raw BigInt.
     expect(typeof body.streams[0].onChainId).toBe('string');
     expect(body.hasMore).toBe(false);

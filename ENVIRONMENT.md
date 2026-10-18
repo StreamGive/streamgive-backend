@@ -3,6 +3,31 @@
 Copy `.env.example` to `.env` (and `.env.test.example` to `.env.test` for
 the test suite) and fill these in.
 
+## Loading and precedence
+
+When the application starts, [`src/index.ts`](./src/index.ts) imports
+`dotenv/config` before the server, indexer, or database modules. Dotenv reads
+`.env` and fills only variables that are not already present in `process.env`.
+Shell exports and hosting-platform settings therefore take precedence over
+`.env` values.
+
+The Vitest setup in [`test/setup.ts`](./test/setup.ts) loads `.env.test` before
+the test modules. It follows the same rule: existing environment variables
+are not overwritten. CI sets `DATABASE_URL` directly to its PostgreSQL service
+in [`.github/workflows/ci.yml`](./.github/workflows/ci.yml), so that CI value
+takes precedence over any `DATABASE_URL` in `.env.test`. The
+`db:push:test` script also explicitly loads `.env.test` for local test-schema
+setup.
+
+Many settings are read from `process.env` once when their module is imported,
+not each time they are used. For example, `src/db.ts` captures
+`DATABASE_URL`, `src/stellar/rpc.ts` captures `SOROBAN_RPC_URL`,
+`src/indexer/contracts.ts` captures the contract IDs, and
+`src/indexer/worker.ts` captures its polling and start-ledger settings. Set
+these values before starting the app or importing those modules; changing
+`process.env` afterward will not update the already-created client or values.
+Tests that change such settings must reset and re-import the relevant modules.
+
 Admin requests are authenticated with a signed timestamp header. The timestamp **must be a Unix timestamp in milliseconds** (i.e. `Date.now()`). Timestamps in seconds are rejected with a `stale_signature` error; multiply by `1000` if you only have seconds.
 
 | Variable                      | Required | Default                                | Notes                                                                                          |
@@ -10,9 +35,11 @@ Admin requests are authenticated with a signed timestamp header. The timestamp *
 | `DATABASE_URL`                 | Yes      | —                                        | Postgres connection string. Inside `docker compose`, the backend service overrides this to point at the `postgres` service, not `localhost`. |
 | `PORT`                         | No       | `3000`                                   | Port the Fastify server listens on.                                                              |
 | `SOROBAN_RPC_URL`               | No       | `https://soroban-testnet.stellar.org`    | Soroban RPC endpoint the indexer polls.                                                          |
+| `STELLAR_NETWORK_PASSPHRASE`    | No       | SDK Testnet passphrase                   | Network passphrase used for read-only contract simulations.                                          |
 | `NGO_REGISTRY_CONTRACT_ID`      | No*      | — (empty)                                | Deployed `ngo-registry` contract id. See `streamgive-contracts/deployments.json`. The indexer no-ops until both contract ids are set. |
 | `DONATION_VAULT_CONTRACT_ID`    | No*      | — (empty)                                | Deployed `donation-vault` contract id. Same file as above.                                       |
 | `INDEXER_POLL_INTERVAL_MS`      | No       | `5000`                                   | How often the indexer polls `getEvents`. Doubles on each consecutive poll failure, up to a 5-minute cap; see [`docs/INDEXER.md`](./docs/INDEXER.md). |
+| `INDEXER_START_LEDGER`          | No       | Latest ledger                            | Starting ledger for a new indexer with no saved checkpoint; useful for historical backfills. Existing checkpoints take precedence. |
 | `INDEXER_MAX_EVENTS_PER_POLL`   | No       | RPC default                              | Positive integer limiting events fetched and processed per poll. The event cursor is checkpointed so the next poll resumes after the last handled event. |
 | `CORS_ORIGINS`                  | No       | `http://localhost:3001`                  | Comma-separated origins allowed to call this API from a browser.                                |
 | `ADMIN_ADDRESS`                 | No**     | — (empty)                                | Stellar public key (`G...`) that must sign requests to admin routes (`/ngo-applications` review). Admin routes 503 until this is set. Should match the `admin` configured on the deployed contracts. |

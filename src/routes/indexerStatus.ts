@@ -1,12 +1,30 @@
-// src/routes/indexerStatus.ts
-import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
-// Import your indexer checkpoint store and RPC client here
+import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
+
+import { getCheckpointState } from '../indexer/checkpoint.js';
+import { WATCHED_CONTRACT_IDS } from '../indexer/contracts.js';
+import { getLatestLedgerSequence } from '../stellar/rpc.js';
 
 export async function indexerStatusRoutes(fastify: FastifyInstance) {
-  fastify.get('/indexer/status', async (request: FastifyRequest, reply: FastifyReply) => {
-    const contractIds = process.env.CONTRACT_IDS ? process.env.CONTRACT_IDS.split(',') : [];
+  /**
+   * Reports whether the indexer is configured and its checkpoint/ledger lag.
+   * @route GET /v1/indexer/status
+   * @auth Public
+   * @returns 200 `{ configured, checkpointLedger, updatedAt, latestLedger, ledgerLag }`; ledger values and timestamp are null when not configured.
+   */
+  fastify.get('/indexer/status', async (_request: FastifyRequest, reply: FastifyReply) => {
+    const envWatched =
+      process.env.WATCHED_CONTRACT_IDS !== undefined
+        ? process.env.WATCHED_CONTRACT_IDS.split(',')
+            .map((s) => s.trim())
+            .filter(Boolean)
+        : [
+            process.env.NGO_REGISTRY_CONTRACT_ID ?? '',
+            process.env.DONATION_VAULT_CONTRACT_ID ?? '',
+          ].filter(Boolean);
 
-    if (contractIds.length === 0) {
+    const isConfigured = envWatched.length > 0 || WATCHED_CONTRACT_IDS.length > 0;
+
+    if (!isConfigured) {
       return reply.send({
         configured: false,
         checkpointLedger: null,
@@ -16,15 +34,14 @@ export async function indexerStatusRoutes(fastify: FastifyInstance) {
       });
     }
 
-    // Retrieve latest stored checkpoint from database/memory
-    // const checkpoint = await getLatestCheckpoint();
-    // Retrieve latest ledger from Stellar RPC
-    // const latestLedger = await stellarRpcClient.getLatestLedger();
+    const [checkpoint, latestLedger] = await Promise.all([
+      getCheckpointState(),
+      getLatestLedgerSequence(),
+    ]);
 
-    const checkpointLedger = 123450; // Example placeholder
-    const updatedAt = new Date().toISOString();
-    const latestLedger = 123455; // Example placeholder
-    const ledgerLag = latestLedger - checkpointLedger;
+    const checkpointLedger = checkpoint?.lastLedger ?? null;
+    const updatedAt = checkpoint?.updatedAt ? checkpoint.updatedAt.toISOString() : null;
+    const ledgerLag = checkpointLedger !== null ? latestLedger - checkpointLedger : null;
 
     return reply.send({
       configured: true,

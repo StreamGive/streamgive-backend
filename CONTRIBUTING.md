@@ -28,8 +28,8 @@ docker compose up -d postgres
 # 3. Install dependencies
 npm install
 
-# 4. Push the Prisma schema onto the development database
-npm run db:push
+# 4. Apply Prisma migrations to the development database
+npm run db:deploy
 
 # 5. (Optional) Seed sample NGOs, donors and streams
 npm run db:seed          # uses upserts, safe to run more than once
@@ -53,7 +53,7 @@ spun up automatically by the Docker Compose file above.
 
 ```bash
 cp .env.test.example .env.test
-npm run db:push:test     # sync the schema onto streamgive_test
+npm run db:deploy:test   # apply migrations onto streamgive_test
 npm test
 ```
 
@@ -69,10 +69,3 @@ npm test
 
 All three must pass with no errors. Then open a PR against `main` and link the
 relevant issue.
-
-Although the acceptance criteria specifically mention README and `DEPLOYMENT.md`, there is another contradiction in the repository.
-
-`CONTRIBUTING.md` currently tells developers:
-
-```bash
-npm run db:push

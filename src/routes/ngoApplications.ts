@@ -6,6 +6,13 @@ import { requireAdminSignature } from '../middleware/adminAuth.js';
 import { notify } from '../notifications/service.js';
 import { stellarPublicKeySchema } from '../stellar/validation.js';
 
+/**
+ * Submission body: `ownerAddress` must be a Stellar G... public key;
+ * `name` and `description` are required (1–200 and 1–5000 characters);
+ * `contactEmail` is a required email; optional `website` is normalized to
+ * HTTPS when scheme-less and must be a URL; optional `country` is at most
+ * 100 characters.
+ */
 const applicationSchema = z.object({
   ownerAddress: stellarPublicKeySchema,
   name: z.string().min(1).max(200),
@@ -21,18 +28,26 @@ const applicationSchema = z.object({
   country: z.string().max(100).optional(),
 });
 
+/**
+ * Query for the admin list: optional status (`PENDING`, `APPROVED`, or
+ * `REJECTED`), `limit` from 1–100 (default 100), and non-negative `offset`
+ * (default 0).
+ */
 const listQuerySchema = z.object({
   status: z.enum(['PENDING', 'APPROVED', 'REJECTED']).optional(),
   limit: z.coerce.number().int().min(1).max(100).default(100),
   offset: z.coerce.number().int().min(0).default(0),
 });
 
+/** Params for application detail and review routes; `id` must be an application UUID. */
 const idParamSchema = z.object({ id: z.string().uuid() });
 
+/** Query for the public status lookup; `ownerAddress` must be a Stellar G... public key. */
 const statusQuerySchema = z.object({
   ownerAddress: stellarPublicKeySchema,
 });
 
+/** Review body for approve/reject; optional `reviewNote` is at most 2000 characters. */
 const reviewBodySchema = z.object({
   reviewNote: z.string().max(2000).optional(),
 });
@@ -81,6 +96,13 @@ async function createApplicationUnlessBlocked(data: z.infer<typeof applicationSc
 }
 
 export async function ngoApplicationRoutes(app: FastifyInstance): Promise<void> {
+  /**
+   * Submits a public NGO verification application.
+   * @route POST /v1/ngo-applications
+   * @body applicationSchema
+   * @auth Public
+   * @returns 201 created application; 400 `{ error: "invalid_request", details }`; 409 `{ error: "already_approved" | "application_already_pending" }`.
+   */
   app.post(
     '/ngo-applications',
     // Public write endpoint — tighter than the global default since it's
@@ -122,6 +144,13 @@ export async function ngoApplicationRoutes(app: FastifyInstance): Promise<void> 
   // outcome and timestamps — never the contact details or description
   // submitted with the application, since anyone who knows (or guesses) an
   // address could otherwise read them.
+  /**
+   * Returns the latest application status without exposing submitted details.
+   * @route GET /v1/ngo-applications/status
+   * @query ownerAddress Stellar public key
+   * @auth Public
+   * @returns 200 `{ status, createdAt, updatedAt }`; 400 invalid address; 404 `{ error: "not_found" }`.
+   */
   app.get(
     '/ngo-applications/status',
     {
@@ -165,6 +194,12 @@ export async function ngoApplicationRoutes(app: FastifyInstance): Promise<void> 
   // status so the client doesn't have to fetch and count applications
   // itself. Must be registered before the /:id route so 'stats' isn't
   // swallowed as an id and rejected by the UUID param validation.
+  /**
+   * Counts applications grouped by review status.
+   * @route GET /v1/ngo-applications/stats
+   * @auth Admin signature required via `x-admin-address`, `x-admin-timestamp`, and `x-admin-signature`.
+   * @returns 200 `{ counts: { PENDING, APPROVED, REJECTED }, total }`.
+   */
   app.get('/ngo-applications/stats', { preHandler: requireAdminSignature }, async () => {
     const grouped = await prisma.ngoApplication.groupBy({
       by: ['status'],
@@ -184,6 +219,13 @@ export async function ngoApplicationRoutes(app: FastifyInstance): Promise<void> 
     };
   });
 
+  /**
+   * Lists applications newest first with optional status and offset pagination.
+   * @route GET /v1/ngo-applications
+   * @query status, limit, offset
+   * @auth Admin signature required via `x-admin-address`, `x-admin-timestamp`, and `x-admin-signature`.
+   * @returns 200 `{ applications: Application[], total, limit, offset }`; 400 `{ error: "invalid_request", details }`.
+   */
   app.get('/ngo-applications', { preHandler: requireAdminSignature }, async (request, reply) => {
     const parsed = listQuerySchema.safeParse(request.query);
     if (!parsed.success) {
@@ -205,6 +247,13 @@ export async function ngoApplicationRoutes(app: FastifyInstance): Promise<void> 
     return { applications, total, limit: parsed.data.limit, offset: parsed.data.offset };
   });
 
+  /**
+   * Returns a single application, including its submitted and review details.
+   * @route GET /v1/ngo-applications/:id
+   * @param id Application UUID
+   * @auth Admin signature required via `x-admin-address`, `x-admin-timestamp`, and `x-admin-signature`.
+   * @returns 200 application; 400 invalid UUID; 404 `{ error: "not_found" }`.
+   */
   app.get(
     '/ngo-applications/:id',
     { preHandler: requireAdminSignature },
@@ -225,6 +274,14 @@ export async function ngoApplicationRoutes(app: FastifyInstance): Promise<void> 
     },
   );
 
+  /**
+   * Approves a pending application and optionally records a review note.
+   * @route POST /v1/ngo-applications/:id/approve
+   * @param id Application UUID
+   * @body Optional `{ reviewNote?: string }` (maximum 2000 characters)
+   * @auth Admin signature required via `x-admin-address`, `x-admin-timestamp`, and `x-admin-signature`.
+   * @returns 200 updated application; 400 invalid params/body; 404 `{ error: "not_found" }`; 409 `{ error: "already_reviewed" }`.
+   */
   app.post(
     '/ngo-applications/:id/approve',
     { preHandler: requireAdminSignature },
@@ -274,6 +331,14 @@ export async function ngoApplicationRoutes(app: FastifyInstance): Promise<void> 
     },
   );
 
+  /**
+   * Rejects a pending application and optionally records a review note.
+   * @route POST /v1/ngo-applications/:id/reject
+   * @param id Application UUID
+   * @body Optional `{ reviewNote?: string }` (maximum 2000 characters)
+   * @auth Admin signature required via `x-admin-address`, `x-admin-timestamp`, and `x-admin-signature`.
+   * @returns 200 updated application; 400 invalid params/body; 404 `{ error: "not_found" }`; 409 `{ error: "already_reviewed" }`.
+   */
   app.post(
     '/ngo-applications/:id/reject',
     { preHandler: requireAdminSignature },

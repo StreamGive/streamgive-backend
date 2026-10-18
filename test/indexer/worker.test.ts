@@ -3,6 +3,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vites
 
 import { prisma } from '../../src/db.js';
 import { getCheckpoint, saveCheckpoint } from '../../src/indexer/checkpoint.js';
+import { rebuildEventFromDeadLetter } from '../../src/indexer/deadLetter.js';
 import type { ContractEvent } from '../../src/indexer/worker.js';
 import { fakeAddress, resetDb } from '../helpers/db.js';
 import { addressScVal, i128ScVal, makeEvent, symbolScVal, u64ScVal } from '../helpers/events.js';
@@ -156,7 +157,9 @@ describe('pollOnce', () => {
     mocks.getEvents.mockResolvedValueOnce({ events: [], latestLedger: 110 });
     await pollOnce(dispatchEvent);
 
-    expect(mocks.getEvents).toHaveBeenLastCalledWith(expect.objectContaining({ startLedger: 103 }));
+    expect(mocks.getEvents).toHaveBeenLastCalledWith(
+      expect.objectContaining({ cursor: 'good-102' }),
+    );
     expect(await getCheckpoint()).toBe(110);
   });
 
@@ -222,7 +225,7 @@ describe('pollOnce', () => {
   it('keeps the checkpoint at the last successful event if failure recording fails', async () => {
     const { pollOnce } = await freshIndexer();
     const handleEvent = vi.fn(async (event: ContractEvent) => {
-      if (event.ledger === 502) throw new Error('handler failed');
+      if (event.ledger === 502) throw new TypeError('invalid payload: shape mismatch');
     });
 
     await saveCheckpoint(500);
@@ -243,6 +246,97 @@ describe('pollOnce', () => {
 
     expect(handleEvent).toHaveBeenCalledTimes(2);
     expect(await getCheckpoint()).toBe(501);
+  });
+
+  it('stores failing events with enough raw data (topic/value XDR, txHash) to rebuild and tracks attempts', async () => {
+    const { pollOnce, dispatchEvent } = await freshIndexer();
+
+    await saveCheckpoint(600);
+    mocks.getLatestLedgerSequence.mockResolvedValue(620);
+
+    const malformed = malformedCreatedEvent(601);
+    mocks.getEvents.mockResolvedValueOnce({
+      events: [malformed],
+      latestLedger: 620,
+    });
+
+    await pollOnce(dispatchEvent);
+
+    const deadLetter = await prisma.indexerDeadLetter.findUnique({
+      where: { eventId: malformed.id },
+    });
+    expect(deadLetter).not.toBeNull();
+    expect(deadLetter?.ledger).toBe(601);
+    expect(deadLetter?.contractId).toBe(mocks.contractId);
+    expect(deadLetter?.txHash).toBe(malformed.txHash);
+    expect(deadLetter?.attempts).toBe(1);
+    expect(deadLetter?.topic.length).toBeGreaterThan(0);
+    expect(deadLetter?.value).not.toBeNull();
+
+    // Rebuild the event from stored XDR payload
+    const rebuilt = rebuildEventFromDeadLetter(deadLetter!);
+    expect(rebuilt.id).toBe(malformed.id);
+    expect(rebuilt.ledger).toBe(malformed.ledger);
+    expect(rebuilt.contractId).toBe(malformed.contractId);
+    expect(rebuilt.txHash).toBe(malformed.txHash);
+    expect(rebuilt.topic).toHaveLength(malformed.topic.length);
+    for (let i = 0; i < malformed.topic.length; i++) {
+      expect(rebuilt.topic[i].toXDR('base64')).toBe(malformed.topic[i].toXDR('base64'));
+    }
+    expect(rebuilt.value?.toXDR('base64')).toBe(malformed.value.toXDR('base64'));
+
+    // If recorded again, attempts increments
+    mocks.getEvents.mockResolvedValueOnce({
+      events: [malformed],
+      latestLedger: 620,
+    });
+    await pollOnce(dispatchEvent);
+
+    const updatedDeadLetter = await prisma.indexerDeadLetter.findUnique({
+      where: { eventId: malformed.id },
+    });
+    expect(updatedDeadLetter?.attempts).toBe(2);
+  });
+
+  it('retries transient handler errors without dead-lettering, advancing checkpoint only after success', async () => {
+    const { pollOnce } = await freshIndexer();
+
+    await saveCheckpoint(700);
+    mocks.getLatestLedgerSequence.mockResolvedValue(720);
+
+    const event = wellFormedCreatedEvent(701, 77n);
+    let attempts = 0;
+    const handleEvent = vi.fn(async () => {
+      attempts++;
+      if (attempts === 1) {
+        throw new Error('transient database connection timeout');
+      }
+    });
+
+    // First attempt: handler fails with a transient error
+    mocks.getEvents.mockResolvedValueOnce({
+      events: [event],
+      latestLedger: 720,
+    });
+
+    await expect(pollOnce(handleEvent)).rejects.toThrow('transient database connection timeout');
+
+    // Checkpoint must NOT advance on transient failure
+    expect(await getCheckpoint()).toBe(700);
+    // Transient failure must NOT be dead-lettered
+    expect(await prisma.indexerDeadLetter.count()).toBe(0);
+
+    // Second attempt: retry succeeds
+    mocks.getEvents.mockResolvedValueOnce({
+      events: [event],
+      latestLedger: 720,
+    });
+
+    await expect(pollOnce(handleEvent)).resolves.not.toThrow();
+
+    // Checkpoint advances only after successful retry
+    expect(await getCheckpoint()).toBe(701);
+    expect(await prisma.indexerDeadLetter.count()).toBe(0);
   });
 });
 

@@ -5,7 +5,13 @@ import { z } from 'zod';
 import { prisma } from '../db.js';
 import { stellarPublicKeySchema } from '../stellar/validation.js';
 import { sendPublicCacheable } from './cacheable.js';
+import { getPublicNgoName } from './ngoName.js';
 
+/**
+ * Query for GET /v1/streams: optional Stellar `donor` and `ngoAddress`,
+ * NGO UUID `ngo`, contract-address `token`, `ACTIVE`/`CANCELLED` status,
+ * `limit` from 1–100 (default 100), and an optional stream UUID `cursor`.
+ */
 const querySchema = z.object({
   donor: stellarPublicKeySchema.optional(),
   ngo: z.string().uuid().optional(),
@@ -23,8 +29,13 @@ const querySchema = z.object({
   cursor: z.string().uuid().optional(),
 });
 
+/** Params for stream detail and activity routes; `id` must be a stream UUID. */
 const idParamSchema = z.object({ id: z.string().uuid() });
 
+/**
+ * Query for GET /v1/streams/:id/activity: `limit` from 1–100 (default 100)
+ * and an optional event UUID `cursor`.
+ */
 const activityQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(100),
   // An event id from a previous page's last item; results start right after it.
@@ -33,18 +44,20 @@ const activityQuerySchema = z.object({
 
 const streamInclude = {
   donor: { select: { address: true } },
-  ngo: { select: { id: true, name: true, ownerAddress: true } },
+  ngo: { select: { id: true, name: true, displayName: true, ownerAddress: true } },
 } as const;
 
 // onChainId is a BigInt; Fastify's default JSON.stringify serializer (no
 // response schema is defined yet) throws on BigInt, so it has to go out as
 // a string.
-export function serializeStream<T extends { onChainId: bigint; ngo: { name: string } }>(stream: T) {
+export function serializeStream<
+  T extends { onChainId: bigint; ngo: { name: string; displayName?: string | null } },
+>(stream: T) {
   const { onChainId, ngo, ...rest } = stream;
   return {
     ...rest,
     onChainId: onChainId.toString(),
-    ngo: { ...ngo, name: ngo.name || null, registered: ngo.name !== '' },
+    ngo: { ...ngo, name: getPublicNgoName(ngo) || null, registered: ngo.name !== '' },
   };
 }
 
@@ -58,6 +71,13 @@ function serializeStreamEvent<T extends { streamId: bigint | null }>(event: T) {
 }
 
 export async function streamRoutes(app: FastifyInstance): Promise<void> {
+  /**
+   * Lists streams newest first with optional donor, NGO, token, and status filters.
+   * @route GET /v1/streams
+   * @query donor, ngo, ngoAddress, token, status, limit, cursor
+   * @auth Public
+   * @returns 200 `{ streams: Stream[], hasMore: boolean, nextCursor: string | null }`; 400 invalid query or cursor.
+   */
   app.get(
     '/streams',
     {
@@ -122,6 +142,13 @@ export async function streamRoutes(app: FastifyInstance): Promise<void> {
     },
   );
 
+  /**
+   * Returns a stream by its UUID.
+   * @route GET /v1/streams/:id
+   * @param id Stream UUID
+   * @auth Public
+   * @returns 200 serialized stream (including string `onChainId`); 400 invalid UUID; 404 `{ error: "not_found" }`.
+   */
   app.get(
     '/streams/:id',
     {
@@ -159,6 +186,14 @@ export async function streamRoutes(app: FastifyInstance): Promise<void> {
     },
   );
 
+  /**
+   * Lists on-chain events for a stream, newest first.
+   * @route GET /v1/streams/:id/activity
+   * @param id Stream UUID
+   * @query limit, cursor
+   * @auth Public
+   * @returns 200 `{ events: StreamEvent[], hasMore: boolean }` with `streamId` serialized as a string or null; 400 invalid params/query; 404 `{ error: "not_found" }`.
+   */
   app.get('/streams/:id/activity', async (request, reply) => {
     const parsedParams = idParamSchema.safeParse(request.params);
     if (!parsedParams.success) {

@@ -3,7 +3,7 @@ import { createHmac } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { prisma } from '../../src/db.js';
-import { notify } from '../../src/notifications/service.js';
+import { _resetDeliveredEventIdsForTest, notify } from '../../src/notifications/service.js';
 import type { NotificationEvent } from '../../src/notifications/types.js';
 import { resetDb } from '../helpers/db.js';
 
@@ -21,6 +21,7 @@ describe('notify', () => {
 
   beforeEach(async () => {
     vi.restoreAllMocks();
+    _resetDeliveredEventIdsForTest();
     await resetDb();
     delete process.env.NOTIFY_WEBHOOK_URL;
     delete process.env.NOTIFY_WEBHOOK_TIMEOUT_MS;
@@ -197,6 +198,71 @@ describe('notify', () => {
     });
 
     expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  describe('delivery deduplication and retry (#270)', () => {
+    it('retries delivery when a previous send attempt failed', async () => {
+      process.env.NOTIFY_WEBHOOK_URL = 'http://example.com/webhook';
+      vi.spyOn(console, 'error').mockImplementation(() => {});
+
+      // First call fails with 500 error
+      const fetchSpy = vi
+        .spyOn(globalThis, 'fetch')
+        .mockResolvedValueOnce(new Response(null, { status: 500 }))
+        .mockResolvedValueOnce(new Response(null, { status: 200 }));
+
+      const retryEvent: NotificationEvent = {
+        type: 'stream_created',
+        streamId: '1',
+        donorAddress: 'GDONOR',
+        ngoId: 'NGO1',
+        eventId: 'event-retry-123',
+      };
+
+      await notify(retryEvent);
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+
+      // On retry, it should try sending again because the first attempt failed
+      await notify(retryEvent);
+      expect(fetchSpy).toHaveBeenCalledTimes(2);
+
+      // On duplicate call after successful delivery, it should not send again
+      await notify(retryEvent);
+      expect(fetchSpy).toHaveBeenCalledTimes(2);
+    });
+
+    it('persists delivery across process restarts so already-delivered events are not resent', async () => {
+      process.env.NOTIFY_WEBHOOK_URL = 'http://example.com/webhook';
+
+      const fetchSpy = vi
+        .spyOn(globalThis, 'fetch')
+        .mockResolvedValue(new Response(null, { status: 200 }));
+
+      const restartEvent: NotificationEvent = {
+        type: 'stream_created',
+        streamId: '2',
+        donorAddress: 'GDONOR2',
+        ngoId: 'NGO2',
+        eventId: 'event-restart-456',
+      };
+
+      // Successfully delivers on first try
+      await notify(restartEvent);
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+
+      // Verify delivery record was persisted in database
+      const log = await prisma.notificationLog.findFirst({
+        where: { eventId: restartEvent.eventId, success: true },
+      });
+      expect(log).not.toBeNull();
+
+      // Simulate process restart by clearing the in-memory deduplication set
+      _resetDeliveredEventIdsForTest();
+
+      // On re-delivery attempt after restart, it checks persisted database log and skips
+      await notify(restartEvent);
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+    });
   });
 
   describe('webhook signature', () => {

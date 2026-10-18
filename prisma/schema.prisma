@@ -43,27 +43,27 @@ enum StreamStatus {
 }
 
 model Stream {
-  id           String       @id @default(uuid())
+  id            String       @id @default(uuid())
   /// Stream id as assigned by the donation-vault contract.
-  onChainId    BigInt       @unique @map("on_chain_id")
-  donorId      String       @map("donor_id")
-  donor        Donor        @relation(fields: [donorId], references: [id])
-  ngoId        String       @map("ngo_id")
-  ngo          Ngo          @relation(fields: [ngoId], references: [id])
-  tokenAddress String       @map("token_address")
+  onChainId     BigInt       @unique @map("on_chain_id")
+  donorId       String       @map("donor_id")
+  donor         Donor        @relation(fields: [donorId], references: [id])
+  ngoId         String       @map("ngo_id")
+  ngo           Ngo          @relation(fields: [ngoId], references: [id])
+  tokenAddress  String       @map("token_address")
   /// i128 values from the contract, stored as decimal strings to avoid
   /// precision loss — Postgres bigint/numeric mapping is handled at the
   /// application layer, not by Prisma's native int types.
-  rate         String
-  lastRate     String?
-  balance      String
-  withdrawn    String
-  status         StreamStatus @default(ACTIVE)
+  rate          String
+  lastRate      String?
+  balance       String
+  withdrawn     String
+  status        StreamStatus @default(ACTIVE)
   /// Transaction hash of the on-chain transaction that created this stream.
   /// Null for streams indexed before this field was added.
-  createdTxHash  String?      @map("created_tx_hash")
-  createdAt      DateTime     @default(now()) @map("created_at")
-  updatedAt      DateTime     @updatedAt @map("updated_at")
+  createdTxHash String?      @map("created_tx_hash")
+  createdAt     DateTime     @default(now()) @map("created_at")
+  updatedAt     DateTime     @updatedAt @map("updated_at")
 
   @@index([donorId])
   @@index([ngoId])
@@ -102,12 +102,14 @@ model NgoApplication {
 
 model NotificationLog {
   id        String   @id @default(uuid())
+  eventId   String?  @map("event_id")
   eventType String   @map("event_type")
   channel   String
   success   Boolean
   error     String?
   createdAt DateTime @default(now()) @map("created_at")
 
+  @@unique([eventId, channel])
   @@map("notification_logs")
 }
 
@@ -129,15 +131,25 @@ model IndexerCheckpoint {
 /// forever. Nothing reads these rows automatically — they exist so a failure
 /// is inspectable and replayable by hand instead of silently dropped.
 model IndexerDeadLetter {
-  id         String   @id @default(uuid())
+  id         String    @id @default(uuid())
   /// Event id as assigned by the RPC ("<ledger>-<index>"), unique per event.
-  eventId    String   @unique @map("event_id")
+  eventId    String    @unique @map("event_id")
   ledger     Int
-  contractId String?  @map("contract_id")
+  contractId String?   @map("contract_id")
   /// The handler's failure message, for diagnosing the shape mismatch.
   error      String
-  createdAt  DateTime @default(now()) @map("created_at")
-  updatedAt  DateTime @updatedAt @map("updated_at")
+  /// Raw topic ScVals encoded as base64 XDR strings.
+  topic      String[]  @default([])
+  /// Raw value ScVal encoded as base64 XDR string.
+  value      String?
+  /// Transaction hash that contained the event.
+  txHash     String?   @map("tx_hash")
+  /// Number of times processing this event has been attempted.
+  attempts   Int       @default(1)
+  /// Timestamp when the dead letter was resolved or replayed.
+  resolvedAt DateTime? @map("resolved_at")
+  createdAt  DateTime  @default(now()) @map("created_at")
+  updatedAt  DateTime  @updatedAt @map("updated_at")
 
   @@index([ledger])
   @@map("indexer_dead_letters")

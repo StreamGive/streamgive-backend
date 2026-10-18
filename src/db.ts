@@ -10,18 +10,18 @@ export const prisma = new PrismaClient({ adapter });
 
 export interface NgoVerificationRecord {
   id: string;
-  walletAddress: string;
+  ownerAddress: string;
   verified: boolean;
 }
 
 export async function getNgoVerificationRecords(): Promise<NgoVerificationRecord[]> {
-  return prisma.nGO.findMany({
-    select: { id: true, walletAddress: true, verified: true },
+  return prisma.ngo.findMany({
+    select: { id: true, ownerAddress: true, verified: true },
   });
 }
 
 export async function setNgoVerified(id: string, verified: boolean): Promise<void> {
-  await prisma.nGO.update({
+  await prisma.ngo.update({
     where: { id },
     data: { verified },
   });
