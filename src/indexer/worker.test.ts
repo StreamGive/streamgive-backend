@@ -2,11 +2,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import * as checkpoint from './checkpoint.js';
 import * as contracts from './contracts.js';
+import * as indexerLock from './lock.js';
 import * as rpc from '../stellar/rpc.js';
 import { startIndexer } from './worker.js';
 
 vi.mock('./checkpoint.js');
 vi.mock('../stellar/rpc.js');
+vi.mock('./lock.js');
 
 describe('startIndexer', () => {
   beforeEach(() => {
@@ -14,6 +16,10 @@ describe('startIndexer', () => {
     vi.spyOn(contracts, 'WATCHED_CONTRACT_IDS', 'get').mockReturnValue(['C_TEST']);
     vi.mocked(checkpoint.getCheckpoint).mockResolvedValue(100);
     vi.mocked(checkpoint.saveCheckpoint).mockResolvedValue();
+    vi.mocked(indexerLock.tryAcquireIndexerLock).mockResolvedValue({
+      isHeld: () => true,
+      release: async () => {},
+    });
     vi.mocked(rpc.getLatestLedgerSequence).mockResolvedValue(100);
     vi.mocked(rpc.rpcServer.getEvents).mockResolvedValue({
       events: [],
