@@ -21,14 +21,22 @@ vi.mock('../../src/indexer/contracts.js', () => ({
 vi.mock('../../src/indexer/deadLetter.js', () => ({
   recordDeadLetter: vi.fn().mockResolvedValue(undefined),
 }));
+vi.mock('../../src/indexer/lock.js', () => ({
+  tryAcquireIndexerLock: vi.fn(),
+}));
 
 const checkpoint = await import('../../src/indexer/checkpoint.js');
 const rpc = await import('../../src/stellar/rpc.js');
 const deadLetter = await import('../../src/indexer/deadLetter.js');
+const indexerLock = await import('../../src/indexer/lock.js');
 
 beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(checkpoint.saveCheckpoint).mockResolvedValue(undefined);
+  vi.mocked(indexerLock.tryAcquireIndexerLock).mockResolvedValue({
+    isHeld: () => true,
+    release: async () => {},
+  });
   process.env.INDEXER_POLL_INTERVAL_MS = '20';
 });
 
@@ -54,6 +62,9 @@ async function freshWorker() {
   }));
   vi.doMock('../../src/indexer/deadLetter.js', () => ({
     recordDeadLetter: deadLetter.recordDeadLetter,
+  }));
+  vi.doMock('../../src/indexer/lock.js', () => ({
+    tryAcquireIndexerLock: indexerLock.tryAcquireIndexerLock,
   }));
   return import('../../src/indexer/worker.js');
 }
@@ -159,5 +170,31 @@ describe('worker bootstrap (no existing checkpoint)', () => {
     await runWorkerBriefly(startIndexer);
 
     expect(checkpoint.saveCheckpoint).toHaveBeenCalledWith(125);
+  });
+
+  it('allows only one of two workers to process events while the advisory lock is held', async () => {
+    vi.mocked(checkpoint.getCheckpoint).mockResolvedValue(100);
+    vi.mocked(rpc.getLatestLedgerSequence).mockResolvedValue(101);
+    let lockAttempts = 0;
+    vi.mocked(indexerLock.tryAcquireIndexerLock).mockImplementation(async () => {
+      lockAttempts += 1;
+      return lockAttempts === 1
+        ? { isHeld: () => true, release: async () => {} }
+        : undefined;
+    });
+    const event = { id: '101-0', ledger: 101 };
+    vi.mocked(rpc.rpcServer.getEvents)
+      .mockResolvedValueOnce({ events: [event] } as never)
+      .mockResolvedValue({ events: [] });
+    const handleEvent = vi.fn().mockResolvedValue(undefined);
+    const { startIndexer } = await freshWorker();
+    const stopFirst = startIndexer(handleEvent);
+    const stopSecond = startIndexer(handleEvent);
+
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    await Promise.all([stopFirst(), stopSecond()]);
+
+    expect(lockAttempts).toBeGreaterThan(1);
+    expect(handleEvent).toHaveBeenCalledTimes(1);
   });
 });
