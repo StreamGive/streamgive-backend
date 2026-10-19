@@ -145,16 +145,19 @@ npm run dev
 ### Verifying the signature
 
 The webhook URL is not a secret — anyone who learns it can POST whatever they
-like to your receiver. Set `NOTIFY_WEBHOOK_SECRET` to a shared secret and
-every request will additionally carry:
+like to your receiver. Every request carries a Unix timestamp and unique
+delivery ID:
 
 ```
-x-streamgive-signature: <hex>
+x-streamgive-timestamp: <unix-seconds>
+x-streamgive-delivery: <uuid>
 ```
 
-where `<hex>` is the lower-case hex HMAC-SHA256 of the **raw request body**,
-keyed with `NOTIFY_WEBHOOK_SECRET`. There is no prefix, timestamp or version
-tag in the value — it is the bare digest.
+Set `NOTIFY_WEBHOOK_SECRET` to a shared secret and requests also carry
+`x-streamgive-signature: v1=<hex>`. The versioned lower-case hex HMAC-SHA256
+is keyed with `NOTIFY_WEBHOOK_SECRET` and signs the exact string
+`<timestamp>.<delivery-id>.<raw-request-body>`. Reject stale timestamps and
+delivery IDs you have already processed to prevent replay.
 
 ## Data model and API statistics
 
@@ -166,23 +169,29 @@ diagram and the exact calculations used by `/ngos/:id` and `/impact/:ngoId`.
 ```js
 import { createHmac, timingSafeEqual } from 'node:crypto';
 
-function isFromStreamGive(rawBody, signatureHeader, secret) {
-  if (!signatureHeader) return false;
+function isFromStreamGive(rawBody, timestamp, deliveryId, signatureHeader, secret) {
+  if (!timestamp || !deliveryId || !signatureHeader) return false;
+  if (!/^\d+$/.test(timestamp)) return false;
+  if (Math.abs(Date.now() / 1000 - Number(timestamp)) > 300) return false;
 
-  const expected = createHmac('sha256', secret).update(rawBody).digest();
-  const received = Buffer.from(signatureHeader, 'hex');
+  const match = /^v1=([0-9a-f]{64})$/.exec(signatureHeader);
+  if (!match) return false;
+
+  const expected = createHmac('sha256', secret)
+    .update(`${timestamp}.${deliveryId}.${rawBody}`)
+    .digest();
+  const received = Buffer.from(match[1], 'hex');
 
   // timingSafeEqual throws on a length mismatch, so check that first.
   return received.length === expected.length && timingSafeEqual(received, expected);
 }
 ```
 
-Reject any request whose signature does not match, and any unsigned request
-once you have configured a secret. When `NOTIFY_WEBHOOK_SECRET` is unset the
-header is omitted entirely, so receivers can be rolled out before the secret
-is configured — but an endpoint that accepts unsigned requests is exactly the
-hole the header exists to close, so treat that as a migration step rather
-than a resting state.
+Call the verifier with the raw body and the three corresponding headers.
+Persist accepted delivery IDs for at least the timestamp acceptance window
+and reject duplicates, along with any request whose signature does not match.
+When `NOTIFY_WEBHOOK_SECRET` is unset the signature header is omitted, so
+configure a secret before requiring signed requests.
 
 ```
 cp .env.example .env

@@ -1,4 +1,4 @@
-import { createHmac } from 'node:crypto';
+import { createHmac, randomUUID } from 'node:crypto';
 
 import { prisma } from '../db.js';
 import { recordNotificationDelivery } from '../metrics.js';
@@ -12,13 +12,13 @@ export function _resetDeliveredEventIdsForTest(): void {
 }
 
 /**
- * Header carrying an HMAC-SHA256 of the request body, keyed with
- * `NOTIFY_WEBHOOK_SECRET`, so a receiver can tell a real notification from
- * one posted by anybody who happened to learn the webhook URL. Lower-case
- * hex, no prefix. See the "Notification events" section of the README for
- * the receiver-side verification recipe.
+ * Header carrying a versioned HMAC-SHA256 of the timestamp, delivery ID,
+ * and request body, keyed with `NOTIFY_WEBHOOK_SECRET`. See the
+ * "Notification events" section of the README for receiver verification.
  */
 const SIGNATURE_HEADER = 'x-streamgive-signature';
+const TIMESTAMP_HEADER = 'x-streamgive-timestamp';
+const DELIVERY_HEADER = 'x-streamgive-delivery';
 const DEFAULT_WEBHOOK_TIMEOUT_MS = 3_000;
 
 function getWebhookTimeoutMs(): number {
@@ -30,7 +30,10 @@ function getWebhookTimeoutMs(): number {
 
 /** Real (if NOTIFY_WEBHOOK_URL is set): POSTs the event as JSON. Node's
  * built-in fetch means this needs no extra dependency. */
-async function notifyWebhook(event: NotificationEvent): Promise<boolean> {
+async function notifyWebhook(
+  event: NotificationEvent,
+  deliveryId?: string,
+): Promise<boolean> {
   // Deliberately read per call rather than captured at module load: hoisting
   // this to a module-level constant freezes the URL at import time, so a
   // value set (or rotated) later in the process lifetime would be ignored
@@ -44,14 +47,22 @@ async function notifyWebhook(event: NotificationEvent): Promise<boolean> {
   // calls — the receiver verifies against the raw bytes it read off the
   // wire, so those bytes are what has to be signed.
   const body = JSON.stringify(event);
+  const timestamp = Math.floor(Date.now() / 1000).toString();
+  const requestDeliveryId = deliveryId ?? randomUUID();
 
-  const headers: Record<string, string> = { 'content-type': 'application/json' };
+  const headers: Record<string, string> = {
+    'content-type': 'application/json',
+    [TIMESTAMP_HEADER]: timestamp,
+    [DELIVERY_HEADER]: requestDeliveryId,
+  };
 
   // Read per call rather than at module load so deployments can rotate the
   // secret without a restart, and so tests can set it per case.
   const secret = process.env.NOTIFY_WEBHOOK_SECRET;
   if (secret) {
-    headers[SIGNATURE_HEADER] = createHmac('sha256', secret).update(body).digest('hex');
+    const signedPayload = `${timestamp}.${requestDeliveryId}.${body}`;
+    headers[SIGNATURE_HEADER] =
+      `v1=${createHmac('sha256', secret).update(signedPayload).digest('hex')}`;
   }
 
   let success = false;
