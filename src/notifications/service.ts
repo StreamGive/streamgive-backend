@@ -1,11 +1,17 @@
 import { createHmac, randomUUID } from 'node:crypto';
 
 import { prisma } from '../db.js';
+import type { Prisma } from '../generated/prisma/client.js';
 import { recordNotificationDelivery } from '../metrics.js';
 import type { NotificationEvent } from './types.js';
 
 const deliveredEventIds = new Set<string>();
 const MAX_DELIVERED_EVENT_IDS = 10_000;
+const MAX_WEBHOOK_ATTEMPTS = 5;
+const WEBHOOK_RETRY_BASE_MS = 1_000;
+const WEBHOOK_RETRY_MAX_MS = 5 * 60_000;
+const WEBHOOK_DELIVERY_LOCK_MS = 60_000;
+const WEBHOOK_DELIVERY_POLL_MS = 1_000;
 
 export function _resetDeliveredEventIdsForTest(): void {
   deliveredEventIds.clear();
@@ -106,6 +112,155 @@ async function notifyWebhook(
   return success;
 }
 
+function isNotificationEvent(value: unknown): value is NotificationEvent {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+  const payload = value as Record<string, unknown>;
+  if (payload.eventId !== undefined && typeof payload.eventId !== 'string') return false;
+
+  switch (payload.type) {
+    case 'stream_created':
+      return (
+        typeof payload.streamId === 'string' &&
+        typeof payload.donorAddress === 'string' &&
+        typeof payload.ngoId === 'string'
+      );
+    case 'stream_withdrawn':
+      return typeof payload.streamId === 'string' && typeof payload.amount === 'string';
+    case 'stream_cancelled':
+      return (
+        typeof payload.streamId === 'string' &&
+        typeof payload.settledToNgo === 'string' &&
+        typeof payload.refundToDonor === 'string'
+      );
+    case 'ngo_approved':
+    case 'ngo_revoked':
+      return typeof payload.ownerAddress === 'string' && typeof payload.ngoId === 'string';
+    case 'application_submitted':
+      return (
+        typeof payload.applicationId === 'string' &&
+        typeof payload.ownerAddress === 'string' &&
+        typeof payload.name === 'string'
+      );
+    case 'application_reviewed':
+      return (
+        typeof payload.applicationId === 'string' &&
+        typeof payload.ownerAddress === 'string' &&
+        (payload.status === 'APPROVED' || payload.status === 'REJECTED') &&
+        (payload.reviewNote === undefined || typeof payload.reviewNote === 'string')
+      );
+    default:
+      return false;
+  }
+}
+
+function retryDelayMs(attempt: number): number {
+  return Math.min(WEBHOOK_RETRY_BASE_MS * 2 ** (attempt - 1), WEBHOOK_RETRY_MAX_MS);
+}
+
+async function deliverWebhookDelivery(id: string): Promise<boolean> {
+  const now = new Date();
+  const expiredLock = new Date(now.getTime() - WEBHOOK_DELIVERY_LOCK_MS);
+  const claim = await prisma.webhookDelivery.updateMany({
+    where: {
+      id,
+      status: 'PENDING',
+      nextAttemptAt: { lte: now },
+      OR: [{ lockedAt: null }, { lockedAt: { lt: expiredLock } }],
+    },
+    data: {
+      attempts: { increment: 1 },
+      lockedAt: now,
+    },
+  });
+  if (claim.count === 0) return false;
+
+  const delivery = await prisma.webhookDelivery.findUnique({ where: { id } });
+  if (!delivery) {
+    throw new Error(`claimed webhook delivery ${id} disappeared`);
+  }
+  if (!isNotificationEvent(delivery.payload)) {
+    throw new Error(`webhook delivery ${id} contains an invalid notification payload`);
+  }
+
+  let success = false;
+  let error: string | undefined;
+  try {
+    success = await notifyWebhook(delivery.payload, delivery.id);
+    if (!success) error = 'webhook request failed';
+  } catch (err) {
+    error = err instanceof Error ? err.message : String(err);
+    console.error(`webhook delivery ${id} failed before request completion`, err);
+  }
+
+  const exhausted = !success && delivery.attempts >= MAX_WEBHOOK_ATTEMPTS;
+  await prisma.webhookDelivery.update({
+    where: { id },
+    data: {
+      status: success ? 'DELIVERED' : exhausted ? 'FAILED' : 'PENDING',
+      nextAttemptAt: new Date(Date.now() + retryDelayMs(delivery.attempts)),
+      lockedAt: null,
+      lastError: success ? null : error ?? 'webhook delivery failed',
+    },
+  });
+  return success;
+}
+
+/** Processes due persisted deliveries; safe to call from multiple workers. */
+export async function processPendingWebhookDeliveries(): Promise<void> {
+  if (!process.env.NOTIFY_WEBHOOK_URL) return;
+
+  const now = new Date();
+  const expiredLock = new Date(now.getTime() - WEBHOOK_DELIVERY_LOCK_MS);
+  await prisma.webhookDelivery.updateMany({
+    where: {
+      status: 'PENDING',
+      attempts: { gte: MAX_WEBHOOK_ATTEMPTS },
+      nextAttemptAt: { lte: now },
+      OR: [{ lockedAt: null }, { lockedAt: { lt: expiredLock } }],
+    },
+    data: { status: 'FAILED', lockedAt: null },
+  });
+
+  const due = await prisma.webhookDelivery.findMany({
+    where: {
+      status: 'PENDING',
+      nextAttemptAt: { lte: now },
+      OR: [{ lockedAt: null }, { lockedAt: { lt: expiredLock } }],
+    },
+    orderBy: { nextAttemptAt: 'asc' },
+    take: 50,
+    select: { id: true },
+  });
+
+  for (const delivery of due) {
+    await deliverWebhookDelivery(delivery.id);
+  }
+}
+
+/** Starts the persistent retry poller; its stop function waits for in-flight work. */
+export function startWebhookDeliveryWorker(): () => Promise<void> {
+  let timer: NodeJS.Timeout | undefined;
+  let inFlight: Promise<void> | undefined;
+  let stopped = false;
+
+  const run = () => {
+    if (stopped) return;
+    inFlight = processPendingWebhookDeliveries()
+      .catch((err) => console.error('webhook delivery retry poll failed', err))
+      .finally(() => {
+        inFlight = undefined;
+        if (!stopped) timer = setTimeout(run, WEBHOOK_DELIVERY_POLL_MS);
+      });
+  };
+
+  run();
+  return async () => {
+    stopped = true;
+    if (timer) clearTimeout(timer);
+    await inFlight;
+  };
+}
+
 /** Stub: no email provider wired up yet — picking one (SendGrid, Postmark,
  * Resend, ...) is a separate decision. `notify()` below is the only thing
  * the rest of the app calls, so swapping this out later touches no call
@@ -143,7 +298,33 @@ export async function notify(event: NotificationEvent): Promise<void> {
     }
   }
 
-  const [webhookSuccess] = await Promise.all([notifyWebhook(event), notifyEmail(event)]);
+  let webhookSuccess: boolean;
+  if (!process.env.NOTIFY_WEBHOOK_URL) {
+    webhookSuccess = await notifyWebhook(event);
+  } else {
+    const payload = JSON.parse(JSON.stringify(event)) as Prisma.InputJsonValue;
+    const delivery = event.eventId
+      ? await prisma.webhookDelivery.upsert({
+          where: { eventId: event.eventId },
+          create: {
+            eventId: event.eventId,
+            eventType: event.type,
+            payload,
+          },
+          update: {},
+        })
+      : await prisma.webhookDelivery.create({
+          data: { eventType: event.type, payload },
+        });
+
+    if (delivery.status === 'PENDING') {
+      webhookSuccess = await deliverWebhookDelivery(delivery.id);
+    } else {
+      webhookSuccess = delivery.status === 'DELIVERED';
+    }
+  }
+
+  await notifyEmail(event);
 
   // Mark delivered only after successful delivery
   if (event.eventId && webhookSuccess) {

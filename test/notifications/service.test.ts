@@ -3,7 +3,11 @@ import { createHmac } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { prisma } from '../../src/db.js';
-import { _resetDeliveredEventIdsForTest, notify } from '../../src/notifications/service.js';
+import {
+  _resetDeliveredEventIdsForTest,
+  notify,
+  processPendingWebhookDeliveries,
+} from '../../src/notifications/service.js';
 import type { NotificationEvent } from '../../src/notifications/types.js';
 import { resetDb } from '../helpers/db.js';
 
@@ -262,6 +266,62 @@ describe('notify', () => {
       // On re-delivery attempt after restart, it checks persisted database log and skips
       await notify(restartEvent);
       expect(fetchSpy).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('persisted webhook retry outbox', () => {
+    async function makeDeliveryDue(eventId: string): Promise<void> {
+      await prisma.webhookDelivery.update({
+        where: { eventId },
+        data: { nextAttemptAt: new Date(0) },
+      });
+    }
+
+    it('retries a receiver that fails twice and then succeeds', async () => {
+      process.env.NOTIFY_WEBHOOK_URL = 'http://example.com/webhook';
+      vi.spyOn(console, 'error').mockImplementation(() => {});
+      const fetchSpy = vi
+        .spyOn(globalThis, 'fetch')
+        .mockResolvedValueOnce(new Response(null, { status: 500 }))
+        .mockResolvedValueOnce(new Response(null, { status: 503 }))
+        .mockResolvedValueOnce(new Response(null, { status: 200 }));
+      const retryEvent = { ...event, eventId: 'event-outbox-retry' };
+
+      await notify(retryEvent);
+      await makeDeliveryDue(retryEvent.eventId);
+      await processPendingWebhookDeliveries();
+      await makeDeliveryDue(retryEvent.eventId);
+      await processPendingWebhookDeliveries();
+
+      const delivery = await prisma.webhookDelivery.findUnique({
+        where: { eventId: retryEvent.eventId },
+      });
+      expect(fetchSpy).toHaveBeenCalledTimes(3);
+      expect(delivery).toMatchObject({ attempts: 3, status: 'DELIVERED', lastError: null });
+    });
+
+    it('marks a delivery failed after the maximum number of attempts', async () => {
+      process.env.NOTIFY_WEBHOOK_URL = 'http://example.com/webhook';
+      vi.spyOn(console, 'error').mockImplementation(() => {});
+      const fetchSpy = vi
+        .spyOn(globalThis, 'fetch')
+        .mockResolvedValue(new Response(null, { status: 500 }));
+      const retryEvent = { ...event, eventId: 'event-outbox-give-up' };
+
+      await notify(retryEvent);
+      for (let attempt = 1; attempt < 5; attempt += 1) {
+        await makeDeliveryDue(retryEvent.eventId);
+        await processPendingWebhookDeliveries();
+      }
+
+      const delivery = await prisma.webhookDelivery.findUnique({
+        where: { eventId: retryEvent.eventId },
+      });
+      expect(fetchSpy).toHaveBeenCalledTimes(5);
+      expect(delivery).toMatchObject({ attempts: 5, status: 'FAILED' });
+
+      await processPendingWebhookDeliveries();
+      expect(fetchSpy).toHaveBeenCalledTimes(5);
     });
   });
 

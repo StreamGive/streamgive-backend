@@ -193,6 +193,10 @@ and reject duplicates, along with any request whose signature does not match.
 When `NOTIFY_WEBHOOK_SECRET` is unset the signature header is omitted, so
 configure a secret before requiring signed requests.
 
+Failed webhook deliveries are persisted and retried with exponential backoff
+for up to five attempts. A delivery that exhausts its attempts remains
+recorded as failed for operational inspection.
+
 ```
 cp .env.example .env
 docker compose up -d postgres   # starts Postgres (+ a streamgive_test DB)

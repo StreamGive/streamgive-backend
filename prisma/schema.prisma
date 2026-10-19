@@ -113,6 +113,29 @@ model NotificationLog {
   @@map("notification_logs")
 }
 
+enum WebhookDeliveryStatus {
+  PENDING
+  DELIVERED
+  FAILED
+}
+
+model WebhookDelivery {
+  id            String               @id @default(uuid())
+  eventId       String?              @unique @map("event_id")
+  eventType     String               @map("event_type")
+  payload       Json
+  status        WebhookDeliveryStatus @default(PENDING)
+  attempts      Int                  @default(0)
+  nextAttemptAt DateTime             @default(now()) @map("next_attempt_at")
+  lockedAt      DateTime?            @map("locked_at")
+  lastError     String?              @map("last_error")
+  createdAt     DateTime             @default(now()) @map("created_at")
+  updatedAt     DateTime             @updatedAt @map("updated_at")
+
+  @@index([status, nextAttemptAt])
+  @@map("webhook_deliveries")
+}
+
 /// Single-row-per-id table tracking how far the event indexer has gotten,
 /// so a restart resumes instead of re-scanning from "now" every time.
 model IndexerCheckpoint {
