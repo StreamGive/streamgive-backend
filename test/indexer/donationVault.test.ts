@@ -504,4 +504,77 @@ describe('handleDonationVaultEvent', () => {
     });
     expect(deadLetter).toBeNull();
   });
+
+  it('writes a StreamEvent row for withdraw with correct type, streamId, ledger, txHash, and payload', async () => {
+    const donorRow = await prisma.donor.create({ data: { address: fakeAddress('Y') } });
+    const ngoRow = await prisma.ngo.create({
+      data: { ownerAddress: fakeAddress('Z'), name: 'NGO Z' },
+    });
+    await prisma.stream.create({
+      data: {
+        onChainId: 70n,
+        donorId: donorRow.id,
+        ngoId: ngoRow.id,
+        tokenAddress: fakeAddress('AA'),
+        rate: '10',
+        balance: '1000',
+        withdrawn: '0',
+        status: 'ACTIVE',
+      },
+    });
+
+    const txHash = 'd4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5';
+    const event = makeEvent([symbolScVal('withdraw'), u64ScVal(70n)], i128ScVal(300n), {
+      ledger: 45678,
+      txHash,
+    });
+    await handleDonationVaultEvent(event);
+
+    const streamEvent = await prisma.streamEvent.findFirst({
+      where: { type: 'withdraw', streamId: 70n },
+    });
+    expect(streamEvent).not.toBeNull();
+    expect(streamEvent?.type).toBe('withdraw');
+    expect(streamEvent?.streamId).toBe(70n);
+    expect(streamEvent?.ledger).toBe(45678);
+    expect(streamEvent?.txHash).toBe(txHash);
+    expect(streamEvent?.payload).toMatchObject({ accrued: '300' });
+  });
+
+  it('writes a StreamEvent row for cancel with correct type, streamId, ledger, txHash, and payload', async () => {
+    const donorRow = await prisma.donor.create({ data: { address: fakeAddress('AB') } });
+    const ngoRow = await prisma.ngo.create({
+      data: { ownerAddress: fakeAddress('AC'), name: 'NGO AC' },
+    });
+    await prisma.stream.create({
+      data: {
+        onChainId: 80n,
+        donorId: donorRow.id,
+        ngoId: ngoRow.id,
+        tokenAddress: fakeAddress('AD'),
+        rate: '15',
+        balance: '2000',
+        withdrawn: '500',
+        status: 'ACTIVE',
+      },
+    });
+
+    const txHash = 'e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6';
+    const event = makeEvent(
+      [symbolScVal('cancel'), u64ScVal(80n)],
+      xdr.ScVal.scvVec([i128ScVal(600n), i128ScVal(1400n)]),
+      { ledger: 56789, txHash },
+    );
+    await handleDonationVaultEvent(event);
+
+    const streamEvent = await prisma.streamEvent.findFirst({
+      where: { type: 'cancel', streamId: 80n },
+    });
+    expect(streamEvent).not.toBeNull();
+    expect(streamEvent?.type).toBe('cancel');
+    expect(streamEvent?.streamId).toBe(80n);
+    expect(streamEvent?.ledger).toBe(56789);
+    expect(streamEvent?.txHash).toBe(txHash);
+    expect(streamEvent?.payload).toMatchObject({ accrued: '600', refund: '1400' });
+  });
 });
