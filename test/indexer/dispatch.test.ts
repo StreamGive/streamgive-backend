@@ -1,9 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { DONATION_VAULT_CONTRACT_ID, NGO_REGISTRY_CONTRACT_ID } from '../../src/indexer/contracts.js';
-import { dispatchEvent } from '../../src/indexer/dispatch.js';
-import { handleDonationVaultEvent } from '../../src/indexer/handlers/donationVault.js';
-import { handleNgoRegistryEvent } from '../../src/indexer/handlers/ngoRegistry.js';
+const { dispatchEvent } = await vi.importActual('../../src/indexer/dispatch.js');
 import type { ContractEvent } from '../../src/indexer/worker.js';
 import { makeEvent, symbolScVal } from '../helpers/events.js';
 
@@ -12,12 +10,20 @@ vi.mock('../../src/indexer/contracts.js', () => ({
   DONATION_VAULT_CONTRACT_ID: 'C_DONATION_VAULT',
 }));
 
+const handleDonationVaultEvent = vi.fn();
+const handleNgoRegistryEvent = vi.fn();
+const recordUnknownContractEvent = vi.fn();
+
 vi.mock('../../src/indexer/handlers/donationVault.js', () => ({
-  handleDonationVaultEvent: vi.fn(),
+  handleDonationVaultEvent,
 }));
 
 vi.mock('../../src/indexer/handlers/ngoRegistry.js', () => ({
-  handleNgoRegistryEvent: vi.fn(),
+  handleNgoRegistryEvent,
+}));
+
+vi.mock('../../src/metrics.js', () => ({
+  recordUnknownContractEvent,
 }));
 
 describe('dispatchEvent', () => {
@@ -35,6 +41,7 @@ describe('dispatchEvent', () => {
 
     expect(handleNgoRegistryEvent).toHaveBeenCalledWith(event);
     expect(handleDonationVaultEvent).not.toHaveBeenCalled();
+    expect(recordUnknownContractEvent).not.toHaveBeenCalled();
   });
 
   it('routes event from DONATION_VAULT_CONTRACT_ID to handleDonationVaultEvent', async () => {
@@ -47,6 +54,7 @@ describe('dispatchEvent', () => {
 
     expect(handleDonationVaultEvent).toHaveBeenCalledWith(event);
     expect(handleNgoRegistryEvent).not.toHaveBeenCalled();
+    expect(recordUnknownContractEvent).not.toHaveBeenCalled();
   });
 
   it('calls neither handler for an unknown contract id', async () => {
@@ -59,5 +67,26 @@ describe('dispatchEvent', () => {
 
     expect(handleNgoRegistryEvent).not.toHaveBeenCalled();
     expect(handleDonationVaultEvent).not.toHaveBeenCalled();
+  });
+
+  it('logs and counts an event from an unknown contract once per contract id', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const contractId = 'C_UNKNOWN_LOG_TEST_1';
+    const event = {
+      ...makeEvent([symbolScVal('test')], symbolScVal('test')),
+      contractId: contractId,
+    } as ContractEvent;
+
+    await dispatchEvent(event);
+    await dispatchEvent(event);
+
+    expect(handleNgoRegistryEvent).not.toHaveBeenCalled();
+    expect(handleDonationVaultEvent).not.toHaveBeenCalled();
+    expect(recordUnknownContractEvent).toHaveBeenCalledWith(contractId);
+    expect(recordUnknownContractEvent).toHaveBeenCalledTimes(2);
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    expect(warnSpy.mockCalls[0][0]).toContain(contractId);
+
+    warnSpy.mockRestore();
   });
 });

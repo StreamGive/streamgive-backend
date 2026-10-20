@@ -1,0 +1,18 @@
+{
+  "default_branch": "main",
+  "branches": [
+    "fix/issue-349-events-from-an-unknown-contract-are-dropped",
+    "main",
+    "origin"
+  ],
+  "parent": {
+    "fix/issue-349-events-from-an-unknown-contract-are-dropped": "main",
+    "main": null,
+    "origin": "main"
+  },
+  "order": [
+    "main",
+    "fix/issue-349-events-from-an-unknown-contract-are-dropped",
+    "origin"
+  ]
+}
