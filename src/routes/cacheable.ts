@@ -17,7 +17,10 @@ export function sendPublicCacheable<T>(
   reply: FastifyReply,
   payload: T,
 ): FastifyReply {
-  const body = JSON.stringify(payload) ?? '';
+  // Serialise once: the same string is hashed for the ETag and sent as the
+  // response body, so the ETag always matches what the client receives and
+  // we don't pay for a second JSON.stringify inside reply.send().
+  const body = JSON.stringify(payload);
   const etag = `"${createHash('sha256').update(body).digest('base64url')}"`;
 
   reply
@@ -28,5 +31,5 @@ export function sendPublicCacheable<T>(
     return reply.code(304).send();
   }
 
-  return reply.send(payload);
+  return reply.type('application/json').send(body);
 }

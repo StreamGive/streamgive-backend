@@ -7,35 +7,36 @@ import { notify } from '../notifications/service.js';
 
 /**
  * Submission body: `ownerAddress` must be a Stellar G... public key;
- * `name` and `description` are required (1–200 and 1–5000 characters);
- * `contactEmail` is a required email; optional `website` is normalized to
- * HTTPS when scheme-less and must be a URL; optional `country` is at most
- * 100 characters.
+ * `name` and `description` are required, trimmed (1–200 and 1–5000 characters);
+ * `contactEmail` is a required email (max 254); optional `website` is
+ * normalized to HTTPS when scheme-less, must be a URL (max 2048); optional
+ * `country` is at most 100 characters.
  */
 const applicationSchema = z.object({
   ownerAddress: z.string().regex(/^G[A-Z2-7]{55}$/),
-  name: z.string().min(1).max(200),
-  description: z.string().min(1).max(5000),
+  name: z.string().trim().min(1).max(200),
+  description: z.string().trim().min(1).max(5000),
   // Normalize scheme-less domains (e.g. "example.org") to "https://example.org"
   // before URL validation so applicants who omit the scheme aren't blocked.
   website: z
     .string()
+    .max(2048)
     .transform((val) => (val && !/^https?:\/\//i.test(val) ? `https://${val}` : val))
     .pipe(z.string().url())
     .optional(),
-  contactEmail: z.string().email(),
+  contactEmail: z.string().email().max(254),
   country: z.string().max(100).optional(),
 });
 
 /**
  * Query for the admin list: optional status (`PENDING`, `APPROVED`, or
  * `REJECTED`), `limit` from 1–100 (default 100), and non-negative `offset`
- * (default 0).
+ * (default 0, max 10000).
  */
 const listQuerySchema = z.object({
   status: z.enum(['PENDING', 'APPROVED', 'REJECTED']).optional(),
   limit: z.coerce.number().int().min(1).max(100).default(100),
-  offset: z.coerce.number().int().min(0).default(0),
+  offset: z.coerce.number().int().min(0).max(10000).default(0),
 });
 
 /** Params for application detail and review routes; `id` must be an application UUID. */

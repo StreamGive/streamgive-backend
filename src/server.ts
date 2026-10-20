@@ -5,6 +5,7 @@ import swagger from '@fastify/swagger';
 import swaggerUi from '@fastify/swagger-ui';
 import Fastify from 'fastify';
 import type { FastifyError } from 'fastify';
+import { createRequire } from 'node:module';
 
 import { prisma } from './db.js';
 import { recordHttpRequest, renderMetrics } from './metrics.js';
@@ -18,6 +19,19 @@ import { ngoRoutes } from './routes/ngos.js';
 import { streamRoutes } from './routes/streams.js';
 import { registerRequestIdHeader, requestIdOptions } from './requestId.js';
 import { registerCompression } from './plugins/compression.js';
+
+const require = createRequire(import.meta.url);
+const pkg = require('../package.json') as { version: string };
+
+/** Wrap a promise with a timeout. Rejects with an Error('timeout') after `ms`. */
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error('timeout')), ms),
+    ),
+  ]);
+}
 
 // pino-pretty runs its formatting on a separate worker thread; spawning
 // one per Fastify instance is fine for a single long-running process, but
@@ -83,6 +97,9 @@ export function buildServer(options?: BuildServerOptions) {
 
   const app = Fastify({
     ...requestIdOptions,
+    // Explicit small body limit: the API only receives small JSON bodies
+    // (NGO applications, review notes). Overridable via BODY_LIMIT_BYTES.
+    bodyLimit: Number(process.env.BODY_LIMIT_BYTES ?? 65536), // 64 KiB
     logger: {
       level: process.env.LOG_LEVEL ?? 'info',
       // Structured JSON otherwise (production: for log aggregation; test:
@@ -129,6 +146,12 @@ export function buildServer(options?: BuildServerOptions) {
     reply.code(statusCode).send({ error: errorString });
   });
 
+  // Unknown routes return the standard error body, not Fastify's default
+  // { message, error, statusCode } shape.
+  app.setNotFoundHandler(async (_request, reply) => {
+    reply.code(404).send({ error: 'not_found' });
+  });
+
   // Register helmet for security headers
   app.register(helmet, {
     contentSecurityPolicy: false, // Disabled for API-only server
@@ -158,12 +181,22 @@ export function buildServer(options?: BuildServerOptions) {
       'x-admin-timestamp',
       'x-request-id',
     ],
-    exposedHeaders: ['x-request-id'],
+    exposedHeaders: [
+      'x-request-id',
+      'retry-after',
+      'x-ratelimit-limit',
+      'x-ratelimit-remaining',
+      'x-ratelimit-reset',
+    ],
   });
 
   app.register(rateLimit, {
     max: Number(process.env.RATE_LIMIT_MAX ?? 100),
     timeWindow: process.env.RATE_LIMIT_WINDOW ?? '1 minute',
+    // Health and metrics are infrastructure endpoints, not public API
+    // routes — exempt them from rate limiting so liveness probes and
+    // Prometheus scrapes never get 429'd.
+    allowList: ['/health', '/health/ready', '/metrics'],
     // Spell the headers out instead of leaning on the plugin's defaults:
     // `Retry-After` is the machine-readable contract clients back off on
     // (RFC 9110 §10.2.3), and the `x-ratelimit-*` headers let a client see
@@ -195,10 +228,17 @@ export function buildServer(options?: BuildServerOptions) {
   /**
    * Exposes process-local Prometheus metrics.
    * @route GET /metrics
-   * @auth Public
+   * @auth Public unless METRICS_TOKEN is set, in which case a Bearer token is required.
    * @returns 200 Prometheus text format (`text/plain; version=0.0.4`).
    */
-  app.get('/metrics', async (_request, reply) => {
+  app.get('/metrics', async (request, reply) => {
+    const metricsToken = process.env.METRICS_TOKEN;
+    if (metricsToken) {
+      const authHeader = request.headers.authorization;
+      if (!authHeader || authHeader !== `Bearer ${metricsToken}`) {
+        return reply.code(401).send({ error: 'unauthorized' });
+      }
+    }
     return reply.type('text/plain; version=0.0.4; charset=utf-8').send(renderMetrics());
   });
 
@@ -207,11 +247,27 @@ export function buildServer(options?: BuildServerOptions) {
       info: {
         title: 'StreamGive API',
         description: 'API for the StreamGive platform',
-        version: '1.0.0',
+        version: pkg.version,
+      },
+      components: {
+        securitySchemes: {
+          AdminSignature: {
+            type: 'apiKey',
+            in: 'header',
+            name: 'x-admin-signature',
+            description:
+              'Ed25519 signature over METHOD:url:timestamp:bodyHash (SEP-53 hashed). ' +
+              'Requires x-admin-address and x-admin-timestamp headers alongside.',
+          },
+        },
       },
       tags: [
         { name: 'Health', description: 'Service health checks' },
         { name: 'NGOs', description: 'NGO directory and profiles' },
+        { name: 'Streams', description: 'Donation streams' },
+        { name: 'Donors', description: 'Donor profiles' },
+        { name: 'Applications', description: 'NGO applications' },
+        { name: 'Admin', description: 'Admin operations (requires signature auth)' },
       ],
     },
   });
@@ -224,40 +280,52 @@ export function buildServer(options?: BuildServerOptions) {
   }
 
   /**
-   * Checks database and Stellar RPC availability.
+   * Liveness probe — checks database only, not the RPC.
+   * The RPC can be slow or down without the API being unhealthy; platforms
+   * that use this as a liveness probe would restart a perfectly healthy
+   * API during an RPC outage if the RPC check were here.
    * @route GET /health
    * @auth Public
-   * @returns 200 or 503 `{ status: "ok" | "error", db: "ok" | "error", rpc: "ok" | "error" }`.
+   * @returns 200 or 503 `{ status: "ok" | "error", db: "ok" | "error" }`.
    */
   app.get('/health', async (_req, reply) => {
-    const [dbResult, rpcResult] = await Promise.allSettled([
-      prisma.$queryRaw`SELECT 1`,
-      getLatestLedgerSequence(),
+    const [dbResult] = await Promise.allSettled([
+      withTimeout(prisma.$queryRaw`SELECT 1`, 2000),
     ]);
 
     const db = dbResult.status === 'fulfilled' ? 'ok' : 'error';
-    const rpc = rpcResult.status === 'fulfilled' ? 'ok' : 'error';
-
-      const status = db === 'ok' && rpc === 'ok' ? 'ok' : 'error';
-      return reply.code(status === 'ok' ? 200 : 503).send({ status, db, rpc });
+    const status = db === 'ok' ? 'ok' : 'error';
+    return reply.code(status === 'ok' ? 200 : 503).send({ status, db });
   });
 
   /**
-   * Checks readiness, including database availability and indexer lag.
+   * Readiness probe — checks database, RPC, and indexer lag, each with
+   * a short timeout so a slow dependency reports as degraded instead of
+   * hanging the endpoint.
    * @route GET /health/ready
    * @auth Public
    * @returns 200 `{ status: "ok", lag, latestLedger, checkpointLedger }`; 503 `{ status: "error", reason, ... }` when unavailable or not caught up.
    */
   app.get('/health/ready', async (request, reply) => {
     try {
-      // 1. Check DB
-      await prisma.$queryRaw`SELECT 1`;
-
-      // 2. Get RPC and Indexer info
-      const [latestLedger, checkpointLedger] = await Promise.all([
-        getLatestLedgerSequence(),
-        getCheckpoint(),
+      const [dbResult, latestLedgerResult, checkpointResult] = await Promise.allSettled([
+        withTimeout(prisma.$queryRaw`SELECT 1`, 2000),
+        withTimeout(getLatestLedgerSequence(), 5000),
+        withTimeout(getCheckpoint(), 2000),
       ]);
+
+      if (dbResult.status !== 'fulfilled') {
+        return reply.code(503).send({ status: 'error', reason: 'database_unavailable' });
+      }
+      if (latestLedgerResult.status !== 'fulfilled') {
+        return reply.code(503).send({ status: 'error', reason: 'rpc_unavailable' });
+      }
+      if (checkpointResult.status !== 'fulfilled') {
+        return reply.code(503).send({ status: 'error', reason: 'checkpoint_unavailable' });
+      }
+
+      const latestLedger = latestLedgerResult.value;
+      const checkpointLedger = checkpointResult.value;
 
       if (checkpointLedger === undefined) {
         return reply.code(503).send({ status: 'error', reason: 'indexer_not_started' });

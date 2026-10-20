@@ -27,6 +27,23 @@ const SEP53_PREFIX = 'Stellar Signed Message:\n';
 
 const usedSignatures = new Map<string, number>();
 
+/** Prune expired entries on a timer instead of scanning every request. */
+const PRUNE_INTERVAL_MS = 60_000;
+let pruneTimer: NodeJS.Timeout | null = null;
+
+function schedulePrune(): void {
+  if (pruneTimer !== null) return;
+  pruneTimer = setInterval(() => {
+    const now = Date.now();
+    for (const [key, seenAt] of usedSignatures) {
+      if (now - seenAt > MAX_CLOCK_SKEW_MS) usedSignatures.delete(key);
+    }
+  }, PRUNE_INTERVAL_MS);
+  pruneTimer.unref?.();
+}
+
+schedulePrune();
+
 /** Exported so tests can sign fixtures the same way a real wallet would,
  * rather than re-deriving (and risking drift from) this exact construction. */
 export function sep53Hash(message: string): Buffer {
@@ -142,11 +159,8 @@ export async function requireAdminSignature(
       ['hex', Buffer.from(signatureB64, 'hex')],
     ];
 
-    const replayKey = `${address}:${timestampHeader}`;
+    const replayKey = `${address}:${timestampHeader}:${request.method}:${request.url}`;
     const now = Date.now();
-    for (const [key, seenAt] of usedSignatures) {
-      if (now - seenAt > MAX_CLOCK_SKEW_MS) usedSignatures.delete(key);
-    }
     if (usedSignatures.has(replayKey)) {
       reply.code(401).send({ error: 'replayed_signature' });
       return;

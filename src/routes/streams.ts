@@ -84,69 +84,42 @@ export async function streamRoutes(app: FastifyInstance): Promise<void> {
    * @auth Public
    * @returns 200 `{ streams: Stream[], hasMore: boolean, nextCursor: string | null }`; 400 invalid query or cursor.
    */
-  app.get(
-    '/streams',
-    {
-      schema: {
-        tags: ['Streams'],
-        summary: 'List donation streams',
-        description: 'Returns streams newest first, with optional filters and cursor pagination.',
-        querystring: {
-          type: 'object',
-          properties: {
-            donor: { type: 'string', pattern: '^G[A-Z2-7]{55}$' },
-            ngo: { type: 'string', format: 'uuid' },
-            ngoAddress: { type: 'string', pattern: '^G[A-Z2-7]{55}$' },
-            token: { type: 'string', pattern: '^C[A-Z2-7]{55}$' },
-            status: { type: 'string', enum: ['ACTIVE', 'CANCELLED'] },
-            limit: { type: 'integer', minimum: 1, maximum: 100, default: 100 },
-            cursor: { type: 'string', format: 'uuid' },
-          },
-        },
-        response: {
-          200: { type: 'object', additionalProperties: true },
-          400: { type: 'object', additionalProperties: true },
-          404: { type: 'object', additionalProperties: true },
-        },
+  app.get('/streams', async (request, reply) => {
+    const parsedQuery = querySchema.safeParse(request.query);
+    if (!parsedQuery.success) {
+      return reply
+        .code(400)
+        .send({ error: 'invalid_request', details: parsedQuery.error.flatten() });
+    }
+    // `donor` filters by wallet address (donors have no public directory of
+    // their own); `ngo` filters by the NGO's internal id, matching what
+    // GET /ngos and /ngos/:id expose; `ngoAddress` filters by the NGO's
+    // Stellar wallet address for clients that only have the on-chain key.
+    const { donor, ngo, ngoAddress, token, status, limit, cursor } = parsedQuery.data;
+
+    const rows = await prisma.stream.findMany({
+      where: {
+        ...(donor ? { donor: { address: donor } } : {}),
+        ...(ngo ? { ngoId: ngo } : {}),
+        ...(ngoAddress ? { ngo: { ownerAddress: ngoAddress } } : {}),
+        ...(token ? { tokenAddress: token } : {}),
+        ...(status ? { status } : {}),
       },
-    },
-    async (request, reply) => {
-      const parsedQuery = querySchema.safeParse(request.query);
-      if (!parsedQuery.success) {
-        return reply
-          .code(400)
-          .send({ error: 'invalid_request', details: parsedQuery.error.flatten() });
-      }
-      // `donor` filters by wallet address (donors have no public directory of
-      // their own); `ngo` filters by the NGO's internal id, matching what
-      // GET /ngos and /ngos/:id expose; `ngoAddress` filters by the NGO's
-      // Stellar wallet address for clients that only have the on-chain key.
-      const { donor, ngo, ngoAddress, token, status, limit, cursor } = parsedQuery.data;
+      orderBy: { createdAt: 'desc' },
+      take: limit + 1,
+      ...(cursor ? { skip: 1, cursor: { id: cursor } } : {}),
+      include: streamInclude,
+    });
 
-      const rows = await prisma.stream.findMany({
-        where: {
-          ...(donor ? { donor: { address: donor } } : {}),
-          ...(ngo ? { ngoId: ngo } : {}),
-          ...(ngoAddress ? { ngo: { ownerAddress: ngoAddress } } : {}),
-          ...(token ? { tokenAddress: token } : {}),
-          ...(status ? { status } : {}),
-        },
-        orderBy: { createdAt: 'desc' },
-        take: limit + 1,
-        ...(cursor ? { skip: 1, cursor: { id: cursor } } : {}),
-        include: streamInclude,
-      });
+    const hasMore = rows.length > limit;
+    const streams = hasMore ? rows.slice(0, limit) : rows;
 
-      const hasMore = rows.length > limit;
-      const streams = hasMore ? rows.slice(0, limit) : rows;
-
-      return sendPublicCacheable(request, reply, {
-        streams: streams.map(serializeStream),
-        hasMore,
-        nextCursor: hasMore ? (streams.at(-1)?.id ?? null) : null,
-      });
-    },
-  );
+    return sendPublicCacheable(request, reply, {
+      streams: streams.map(serializeStream),
+      hasMore,
+      nextCursor: hasMore ? (streams.at(-1)?.id ?? null) : null,
+    });
+  });
 
   /**
    * Returns a stream by its UUID.
@@ -155,42 +128,23 @@ export async function streamRoutes(app: FastifyInstance): Promise<void> {
    * @auth Public
    * @returns 200 serialized stream (including string `onChainId`); 400 invalid UUID; 404 `{ error: "not_found" }`.
    */
-  app.get(
-    '/streams/:id',
-    {
-      schema: {
-        tags: ['Streams'],
-        summary: 'Get a donation stream',
-        params: {
-          type: 'object',
-          properties: { id: { type: 'string', format: 'uuid' } },
-          required: ['id'],
-        },
-        response: {
-          200: { type: 'object', additionalProperties: true },
-          400: { type: 'object', additionalProperties: true },
-          404: { type: 'object', additionalProperties: true },
-        },
-      },
-    },
-    async (request, reply) => {
-      const parsedParams = idParamSchema.safeParse(request.params);
-      if (!parsedParams.success) {
-        return reply.code(400).send({ error: 'invalid_request' });
-      }
+  app.get('/streams/:id', async (request, reply) => {
+    const parsedParams = idParamSchema.safeParse(request.params);
+    if (!parsedParams.success) {
+      return reply.code(400).send({ error: 'invalid_request' });
+    }
 
-      const stream = await prisma.stream.findUnique({
-        where: { id: parsedParams.data.id },
-        include: streamInclude,
-      });
+    const stream = await prisma.stream.findUnique({
+      where: { id: parsedParams.data.id },
+      include: streamInclude,
+    });
 
-      if (!stream) {
-        return reply.code(404).send({ error: 'not_found' });
-      }
+    if (!stream) {
+      return reply.code(404).send({ error: 'not_found' });
+    }
 
-      return sendPublicCacheable(request, reply, serializeStream(stream));
-    },
-  );
+    return sendPublicCacheable(request, reply, serializeStream(stream));
+  });
 
   /**
    * Lists on-chain events for a stream, newest first.
@@ -234,6 +188,6 @@ export async function streamRoutes(app: FastifyInstance): Promise<void> {
     const hasMore = rows.length > limit;
     const events = hasMore ? rows.slice(0, limit) : rows;
 
-    return { events: events.map(serializeStreamEvent), hasMore };
+    return { events: events.map(serializeStreamEvent), hasMore, nextCursor: hasMore ? (events.at(-1)?.id ?? null) : null };
   });
 }
