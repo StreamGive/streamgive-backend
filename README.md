@@ -55,16 +55,15 @@ Keeping off-chain application review separate from on-chain contract approval en
 
 Admin routes are protected by a signed request scheme (`requireAdminSignature`). Each request must include:
 
-- `x-admin-address` — the admin's Stellar public key (`G...`), which must match `ADMIN_ADDRESS`.
+- `x-admin-address` — the admin's Stellar public key (`G...`), which must match `ADMIN_ADDRESS` or be listed in `ADMIN_ADDRESSES`.
 - `x-admin-timestamp` — the current time as a Unix timestamp in **milliseconds** (e.g. `Date.now()` in JavaScript).
 - `x-admin-signature` — a signature over the request payload including the timestamp.
 
-The timestamp must be within a±5-minute skew of the server's clock. The unit is
+The timestamp must be within a ±5-minute skew of the server's clock. The unit is
 **milliseconds**, not seconds. A client that sends a Unix timestamp
-in seconds (typically 10 digits) will be rejected with a `stale_signature`
-error. To avoid ambiguity, the server explicitly rejects timestamps that
-look like seconds with a clear `admin_timestamp_unit` error instead of a
-generic stale-signature failure.
+in seconds (typically 10 digits) will be rejected. To avoid ambiguity,
+the server explicitly rejects timestamps that look like seconds with a clear
+`timestamp_unit_mismatch` error instead of a generic stale-signature failure.
 
 ## Local development
 

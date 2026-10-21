@@ -12,9 +12,11 @@ export async function indexerStatusRoutes(fastify: FastifyInstance) {
    * @returns 200 `{ configured, checkpointLedger, updatedAt, latestLedger, ledgerLag }`; ledger values and timestamp are null when not configured.
    */
   fastify.get('/indexer/status', async (_request: FastifyRequest, reply: FastifyReply) => {
+    const watchedEnvString = process.env.WATCHED_CONTRACT_IDS ?? process.env.CONTRACT_IDS;
     const envWatched =
-      process.env.WATCHED_CONTRACT_IDS !== undefined
-        ? process.env.WATCHED_CONTRACT_IDS.split(',')
+      watchedEnvString !== undefined
+        ? watchedEnvString
+            .split(',')
             .map((s) => s.trim())
             .filter(Boolean)
         : [

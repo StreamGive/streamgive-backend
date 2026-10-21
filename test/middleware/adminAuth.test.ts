@@ -124,6 +124,31 @@ describe('requireAdminSignature', () => {
     await app.close();
   });
 
+  it('rejects seconds-based timestamps with timestamp_unit_mismatch', async () => {
+    configureAdmins(legacyAdmin.publicKey());
+
+    const app = buildServer();
+    // Seconds-based timestamp (magnitude < 100,000,000,000)
+    const secondsTimestamp = Math.floor(Date.now() / 1000).toString();
+    const payload = `GET:/ngo-applications:${secondsTimestamp}`;
+    const signature = Buffer.from(legacyAdmin.sign(sep53Hash(payload))).toString('base64');
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/ngo-applications',
+      headers: {
+        'x-admin-address': legacyAdmin.publicKey(),
+        'x-admin-signature': signature,
+        'x-admin-timestamp': secondsTimestamp,
+      },
+    });
+
+    expect(response.statusCode).toBe(401);
+    expect(response.json().error).toBe('timestamp_unit_mismatch');
+
+    await app.close();
+  });
+
   it('rejects malformed admin addresses', async () => {
     configureAdmins(legacyAdmin.publicKey());
 
