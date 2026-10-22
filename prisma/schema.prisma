@@ -92,12 +92,25 @@ model NgoApplication {
   country      String?
   status       NgoApplicationStatus @default(PENDING)
   reviewNote   String?              @map("review_note")
+  emailVerifiedAt DateTime?         @map("email_verified_at")
   createdAt    DateTime             @default(now()) @map("created_at")
   updatedAt    DateTime             @updatedAt @map("updated_at")
+  contactEmailChallenge NgoApplicationContactChallenge?
 
   @@index([ownerAddress])
   @@index([status])
   @@map("ngo_applications")
+}
+
+model NgoApplicationContactChallenge {
+  tokenHash     String         @id @map("token_hash")
+  applicationId String         @unique @map("application_id")
+  expiresAt     DateTime       @map("expires_at")
+  createdAt     DateTime       @default(now()) @map("created_at")
+  application   NgoApplication @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+
+  @@index([expiresAt])
+  @@map("ngo_application_contact_challenges")
 }
 
 model NgoApplicationChallenge {

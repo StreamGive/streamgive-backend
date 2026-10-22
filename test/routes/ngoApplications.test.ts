@@ -43,11 +43,21 @@ async function signedApplicationPayload(
 }
 
 describe('POST /v1/ngo-applications', () => {
+  const originalResendApiKey = process.env.RESEND_API_KEY;
+  const originalEmailFrom = process.env.NOTIFY_EMAIL_FROM;
+  const originalApiPublicUrl = process.env.API_PUBLIC_URL;
+
   beforeAll(() => {
     process.env.ADMIN_ADDRESS = adminKeypair.publicKey();
   });
 
   afterEach(async () => {
+    if (originalResendApiKey === undefined) delete process.env.RESEND_API_KEY;
+    else process.env.RESEND_API_KEY = originalResendApiKey;
+    if (originalEmailFrom === undefined) delete process.env.NOTIFY_EMAIL_FROM;
+    else process.env.NOTIFY_EMAIL_FROM = originalEmailFrom;
+    if (originalApiPublicUrl === undefined) delete process.env.API_PUBLIC_URL;
+    else process.env.API_PUBLIC_URL = originalApiPublicUrl;
     vi.mocked(notify).mockClear();
     await resetDb();
   });
@@ -69,6 +79,51 @@ describe('POST /v1/ngo-applications', () => {
       ownerAddress: response.json().ownerAddress,
       name: response.json().name,
     });
+
+    await app.close();
+  });
+
+  it('verifies the contact email with a single-use link', async () => {
+    process.env.RESEND_API_KEY = 'test-key';
+    process.env.NOTIFY_EMAIL_FROM = 'verify@example.org';
+    process.env.API_PUBLIC_URL = 'https://api.example.org';
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(new Response(null, { status: 200 }));
+    const app = buildServer();
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/ngo-applications',
+      payload: await signedApplicationPayload(app),
+    });
+    expect(response.statusCode).toBe(201);
+    expect(response.json().emailVerifiedAt).toBeNull();
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+
+    const email = JSON.parse(String(fetchSpy.mock.calls[0][1]?.body)) as { html: string };
+    const [, link] = email.html.match(/href="([^"]+)"/) ?? [];
+    if (!link) throw new Error('verification link was missing from the email');
+    const token = new URL(link).searchParams.get('token');
+    if (!token) throw new Error('verification token was missing from the link');
+    expect(token).toHaveLength(43);
+
+    const verified = await app.inject({
+      method: 'GET',
+      url: `/v1/ngo-applications/verify-contact-email?token=${token}`,
+    });
+    expect(verified.statusCode).toBe(200);
+    expect(verified.json()).toEqual({ verified: true });
+
+    const reused = await app.inject({
+      method: 'GET',
+      url: `/v1/ngo-applications/verify-contact-email?token=${token}`,
+    });
+    expect(reused.statusCode).toBe(400);
+    expect(
+      (await prisma.ngoApplication.findUnique({ where: { id: response.json().id } }))
+        ?.emailVerifiedAt,
+    ).not.toBeNull();
 
     await app.close();
   });
@@ -425,7 +480,9 @@ describe('admin NGO application review', () => {
   it('approves a pending application', async () => {
     const app = buildServer();
 
-    const application = await prisma.ngoApplication.create({ data: validApplicationPayload() });
+    const application = await prisma.ngoApplication.create({
+      data: { ...validApplicationPayload(), emailVerifiedAt: new Date() },
+    });
     const url = `/v1/ngo-applications/${application.id}/approve`;
     const headers = signAdminRequest(adminKeypair, 'POST', url);
 
@@ -447,7 +504,9 @@ describe('admin NGO application review', () => {
 
   it('notifies when a pending application is rejected', async () => {
     const app = buildServer();
-    const application = await prisma.ngoApplication.create({ data: validApplicationPayload() });
+    const application = await prisma.ngoApplication.create({
+      data: { ...validApplicationPayload(), emailVerifiedAt: new Date() },
+    });
     const url = `/v1/ngo-applications/${application.id}/reject`;
     const headers = signAdminRequest(adminKeypair, 'POST', url);
 

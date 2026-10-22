@@ -63,3 +63,4 @@ Admin signature timestamps are compared against `Date.now()` (milliseconds) with
 | `RESEND_API_KEY` | No | — | Resend API key used to send email notifications. Email notifications remain in log-only stub mode when this is unset. |
 | `NOTIFY_EMAIL_FROM` | No | — | Sender address used by Resend. Required when `RESEND_API_KEY` is configured. |
 | `NOTIFY_EMAIL_TO` | No | — | Recipient address for notification emails. Email notifications are skipped when this is unset. |
+| `API_PUBLIC_URL` | No | — | Public HTTPS origin for contact-email verification links. Required with `RESEND_API_KEY` and `NOTIFY_EMAIL_FROM` to verify NGO application contact addresses. |
