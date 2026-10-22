@@ -168,6 +168,9 @@ diagram and the exact calculations used by `/ngos/:id` and `/impact/:ngoId`.
 
 ## Notification events
 
+See [docs/NOTIFICATIONS.md](./docs/NOTIFICATIONS.md) for the payload of every
+event type, the delivery behaviour, the request headers, and the timeout.
+
 ```js
 import { createHmac, timingSafeEqual } from 'node:crypto';
 
