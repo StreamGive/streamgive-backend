@@ -224,8 +224,8 @@ describe('POST /v1/ngo-applications', () => {
     // already covered above, and only a genuine overlap exercises the race
     // where both requests read "nothing blocking" before either inserts.
     const [first, second] = await Promise.all([
-      app.inject({ method: 'POST', url: '/ngo-applications', payload: firstPayload }),
-      app.inject({ method: 'POST', url: '/ngo-applications', payload: secondPayload }),
+      app.inject({ method: 'POST', url: '/v1/ngo-applications', payload: firstPayload }),
+      app.inject({ method: 'POST', url: '/v1/ngo-applications', payload: secondPayload }),
     ]);
 
     expect([first.statusCode, second.statusCode].sort((a, b) => a - b)).toEqual([201, 409]);
@@ -345,7 +345,7 @@ describe('admin NGO application review', () => {
     delete process.env.ADMIN_ADDRESS;
 
     try {
-      const response = await app.inject({ method: 'GET', url: '/ngo-applications' });
+      const response = await app.inject({ method: 'GET', url: '/v1/ngo-applications' });
       expect(response.statusCode).toBe(503);
       expect(response.json().error).toBe('admin_auth_not_configured');
     } finally {
@@ -379,13 +379,11 @@ describe('admin NGO application review', () => {
 
   it('rejects a seconds-based timestamp with a clear unit error', async () => {
     const app = buildServer();
-    const headers = signAdminRequest(adminKeypair, 'GET', '/ngo-applications', {
-      timestamp: Math.floor(Date.now() / 1000),
-    });
+    const headers = signAdminRequest(adminKeypair, 'GET', '/v1/ngo-applications', Math.floor(Date.now() / 1000).toString());
 
-    const response = await app.inject({ method: 'GET', url: '/ngo-applications', headers });
+    const response = await app.inject({ method: 'GET', url: '/v1/ngo-applications', headers });
     expect(response.statusCode).toBe(401);
-    expect(response.json().error).toBe('invalid_timestamp_unit');
+    expect(response.json().error).toBe('timestamp_unit_mismatch');
 
     await app.close();
   });
@@ -432,7 +430,8 @@ describe('admin NGO application review', () => {
 
     const application = await prisma.ngoApplication.create({ data: validApplicationPayload() });
     const url = `/v1/ngo-applications/${application.id}/approve`;
-    const headers = signAdminRequest(adminKeypair, 'POST', url);
+    const body = JSON.stringify({});
+    const headers = signAdminRequest(adminKeypair, 'POST', url, undefined, body);
 
     const response = await app.inject({ method: 'POST', url, headers, payload: {} });
     expect(response.statusCode).toBe(200);
@@ -458,7 +457,8 @@ describe('admin NGO application review', () => {
     const app = buildServer();
     const application = await prisma.ngoApplication.create({ data: validApplicationPayload() });
     const url = `/v1/ngo-applications/${application.id}/reject`;
-    const headers = signAdminRequest(adminKeypair, 'POST', url);
+    const body = JSON.stringify({ reviewNote: 'Insufficient documentation' });
+    const headers = signAdminRequest(adminKeypair, 'POST', url, undefined, body);
 
     const response = await app.inject({
       method: 'POST',
@@ -487,7 +487,8 @@ describe('admin NGO application review', () => {
 
     const application = await prisma.ngoApplication.create({ data: validApplicationPayload() });
     const url = `/v1/ngo-applications/${application.id}/approve`;
-    const headers = signAdminRequest(adminKeypair, 'POST', url);
+    const body = JSON.stringify([]);
+    const headers = signAdminRequest(adminKeypair, 'POST', url, undefined, body);
 
     const response = await app.inject({ method: 'POST', url, headers, payload: [] as never });
 
@@ -506,7 +507,8 @@ describe('admin NGO application review', () => {
 
     const application = await prisma.ngoApplication.create({ data: validApplicationPayload() });
     const url = `/v1/ngo-applications/${application.id}/reject`;
-    const headers = signAdminRequest(adminKeypair, 'POST', url);
+    const body = JSON.stringify(['not', 'an', 'object']);
+    const headers = signAdminRequest(adminKeypair, 'POST', url, undefined, body);
 
     const response = await app.inject({
       method: 'POST',
@@ -530,7 +532,8 @@ describe('admin NGO application review', () => {
     const application = await prisma.ngoApplication.create({ data: validApplicationPayload() });
     const realUrl = `/v1/ngo-applications/${application.id}/approve`;
     // Signed for a *different* application's approve endpoint.
-    const headers = signAdminRequest(adminKeypair, 'POST', '/v1/ngo-applications/other-id/approve');
+    const body = JSON.stringify({});
+    const headers = signAdminRequest(adminKeypair, 'POST', '/v1/ngo-applications/other-id/approve', undefined, body);
 
     const response = await app.inject({ method: 'POST', url: realUrl, headers, payload: {} });
     expect(response.statusCode).toBe(401);
@@ -543,7 +546,8 @@ describe('admin NGO application review', () => {
 
     const nonExistentId = '00000000-0000-0000-0000-000000000000';
     const approveUrl = `/v1/ngo-applications/${nonExistentId}/approve`;
-    const approveHeaders = signAdminRequest(adminKeypair, 'POST', approveUrl);
+    const approveBody = JSON.stringify({});
+    const approveHeaders = signAdminRequest(adminKeypair, 'POST', approveUrl, undefined, approveBody);
 
     const approveResponse = await app.inject({
       method: 'POST',
@@ -555,7 +559,8 @@ describe('admin NGO application review', () => {
     expect(approveResponse.json().error).toBe('not_found');
 
     const rejectUrl = `/v1/ngo-applications/${nonExistentId}/reject`;
-    const rejectHeaders = signAdminRequest(adminKeypair, 'POST', rejectUrl);
+    const rejectBody = JSON.stringify({});
+    const rejectHeaders = signAdminRequest(adminKeypair, 'POST', rejectUrl, undefined, rejectBody);
 
     const rejectResponse = await app.inject({
       method: 'POST',
@@ -701,7 +706,7 @@ describe('GET /ngo-applications status filter', () => {
     const expected = await seedMixedStatuses();
 
     for (const status of ['PENDING', 'APPROVED', 'REJECTED'] as const) {
-      const url = `/ngo-applications?status=${status}`;
+      const url = `/v1/ngo-applications?status=${status}`;
       // The signature covers `${method}:${url}`, query string included, so
       // signing the bare path here would 401 instead of exercising the filter.
       const headers = signAdminRequest(adminKeypair, 'GET', url);
@@ -740,7 +745,7 @@ describe('GET /ngo-applications status filter', () => {
     const app = buildServer();
     const expected = await seedMixedStatuses();
 
-    const url = '/ngo-applications';
+    const url = '/v1/ngo-applications';
     const headers = signAdminRequest(adminKeypair, 'GET', url);
 
     const response = await app.inject({ method: 'GET', url, headers });
@@ -774,7 +779,7 @@ describe('GET /ngo-applications status filter', () => {
     // enum value, which surfaces to the client as a 500 — so this assertion
     // pins a client-error contract, not just a validation detail.
     for (const status of ['DELETED', 'pending']) {
-      const url = `/ngo-applications?status=${status}`;
+      const url = `/v1/ngo-applications?status=${status}`;
       const headers = signAdminRequest(adminKeypair, 'GET', url);
 
       const response = await app.inject({ method: 'GET', url, headers });
@@ -790,7 +795,7 @@ describe('GET /ngo-applications status filter', () => {
     const app = buildServer();
     const expected = await seedMixedStatuses();
 
-    const url = '/ngo-applications?status=PENDING&limit=1&offset=1';
+    const url = '/v1/ngo-applications?status=PENDING&limit=1&offset=1';
     const headers = signAdminRequest(adminKeypair, 'GET', url);
 
     const response = await app.inject({ method: 'GET', url, headers });

@@ -60,16 +60,38 @@ Keeping off-chain application review separate from on-chain contract approval en
 
 Admin routes are protected by a signed request scheme (`requireAdminSignature`). Each request must include:
 
-- `x-admin-address` — the admin's Stellar public key (`G...`), which must match `ADMIN_ADDRESS`.
+- `x-admin-address` — the admin's Stellar public key (`G...`), which must appear in `ADMIN_ADDRESS` or `ADMIN_ADDRESSES`.
 - `x-admin-timestamp` — the current time as a Unix timestamp in **milliseconds** (e.g. `Date.now()` in JavaScript).
-- `x-admin-signature` — a signature over the request payload including the timestamp.
+- `x-admin-signature` — a base64 or hex Ed25519 signature over the signed payload (see below).
 
-The timestamp must be within a±5-minute skew of the server's clock. The unit is
-**milliseconds**, not seconds. A client that sends a Unix timestamp
-in seconds (typically 10 digits) will be rejected with a `stale_signature`
-error. To avoid ambiguity, the server explicitly rejects timestamps that
-look like seconds with a clear `admin_timestamp_unit` error instead of a
-generic stale-signature failure.
+### Signed payload
+
+The signature is produced by signing the following string with the admin's Stellar keypair via the SEP-53 generic message-signing scheme (`SHA-256(prefix + message)`, where `prefix = "Stellar Signed Message:\n"`):
+
+```
+METHOD:url:timestamp:bodyHash
+```
+
+- **METHOD** — HTTP method in upper-case, e.g. `GET`, `POST`, `PATCH`.
+- **url** — the full request URL including path and query string, e.g. `/v1/ngo-applications?status=PENDING`.
+- **timestamp** — the `x-admin-timestamp` value (milliseconds).
+- **bodyHash** — lower-case hex SHA-256 of the raw request body, or the SHA-256 of an empty buffer (`e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`) for bodyless requests (GET, DELETE, etc.).
+
+Including the body hash in the signed payload prevents an attacker who intercepts a valid request from replaying it with a different body (e.g. a different `reviewNote`) inside the replay window.
+
+### Timestamp rules
+
+The timestamp must be within ±5 minutes of the server's clock. The unit is **milliseconds**, not seconds. Sending a 10-digit seconds-precision timestamp is rejected with `timestamp_unit_mismatch` (not `stale_signature`) so clients get a clear signal.
+
+### Error codes
+
+| Error | Status | Meaning |
+|---|---|---|
+| `unauthorized` | 401 | Missing or invalid headers, address not on allow-list, or signature did not verify |
+| `stale_signature` | 401 | Timestamp is outside the ±5-minute replay window |
+| `timestamp_unit_mismatch` | 401 | Timestamp looks like seconds (< 10^11); send milliseconds |
+| `replayed_signature` | 401 | The same address+timestamp+method+url has already been used in this window |
+| `admin_auth_not_configured` | 503 | Neither `ADMIN_ADDRESS` nor `ADMIN_ADDRESSES` is set |
 
 ## Local development
 

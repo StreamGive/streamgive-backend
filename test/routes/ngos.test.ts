@@ -57,14 +57,14 @@ describe('GET /v1/ngos', () => {
   it('returns an ETag and responds 304 when the client has the current representation', async () => {
     const app = buildServer();
 
-    const firstResponse = await app.inject({ method: 'GET', url: '/ngos' });
+    const firstResponse = await app.inject({ method: 'GET', url: '/v1/ngos' });
     const etag = firstResponse.headers.etag;
     expect(etag).toBeDefined();
     expect(firstResponse.headers['cache-control']).toContain('public');
 
     const cachedResponse = await app.inject({
       method: 'GET',
-      url: '/ngos',
+      url: '/v1/ngos',
       headers: { 'if-none-match': String(etag) },
     });
 
@@ -259,7 +259,7 @@ describe('GET /ngos/all (admin)', () => {
       data: { ownerAddress: fakeAddress('A'), name: 'Verified NGO', verified: true },
     });
 
-    const response = await app.inject({ method: 'GET', url: '/ngos/all' });
+    const response = await app.inject({ method: 'GET', url: '/v1/ngos/all' });
     expect(response.statusCode).toBe(401);
 
     await app.close();
@@ -275,8 +275,8 @@ describe('GET /ngos/all (admin)', () => {
       data: { ownerAddress: fakeAddress('B'), name: 'Verified NGO', verified: true },
     });
 
-    const headers = signAdminRequest(adminKeypair, 'GET', '/ngos/all');
-    const response = await app.inject({ method: 'GET', url: '/ngos/all', headers });
+    const headers = signAdminRequest(adminKeypair, 'GET', '/v1/ngos/all');
+    const response = await app.inject({ method: 'GET', url: '/v1/ngos/all', headers });
     expect(response.statusCode).toBe(200);
 
     const body = response.json();
@@ -300,7 +300,7 @@ describe('GET /ngos/all (admin)', () => {
       data: { ownerAddress: fakeAddress('B'), name: 'Verified NGO', verified: true },
     });
 
-    const url = '/ngos/all?verified=false';
+    const url = '/v1/ngos/all?verified=false';
     const headers = signAdminRequest(adminKeypair, 'GET', url);
     const response = await app.inject({ method: 'GET', url, headers });
     expect(response.statusCode).toBe(200);
@@ -323,7 +323,7 @@ describe('GET /ngos/all (admin)', () => {
       data: { ownerAddress: fakeAddress('B'), name: 'Verified NGO', verified: true },
     });
 
-    const url = '/ngos/all?verified=true';
+    const url = '/v1/ngos/all?verified=true';
     const headers = signAdminRequest(adminKeypair, 'GET', url);
     const response = await app.inject({ method: 'GET', url, headers });
     expect(response.statusCode).toBe(200);
@@ -339,7 +339,7 @@ describe('GET /ngos/all (admin)', () => {
   it('400s on an invalid verified value', async () => {
     const app = buildServer();
 
-    const url = '/ngos/all?verified=maybe';
+    const url = '/v1/ngos/all?verified=maybe';
     const headers = signAdminRequest(adminKeypair, 'GET', url);
     const response = await app.inject({ method: 'GET', url, headers });
     expect(response.statusCode).toBe(400);
@@ -357,7 +357,7 @@ describe('GET /ngos/all (admin)', () => {
       });
     }
 
-    const firstUrl = '/ngos/all?limit=2';
+    const firstUrl = '/v1/ngos/all?limit=2';
     const firstHeaders = signAdminRequest(adminKeypair, 'GET', firstUrl);
     const firstPage = await app.inject({ method: 'GET', url: firstUrl, headers: firstHeaders });
     expect(firstPage.statusCode).toBe(200);
@@ -367,7 +367,7 @@ describe('GET /ngos/all (admin)', () => {
     expect(firstBody.nextCursor).not.toBeNull();
     const firstIds = firstBody.ngos.map((n: { id: string }) => n.id);
 
-    const secondUrl = `/ngos/all?limit=2&cursor=${firstBody.nextCursor}`;
+    const secondUrl = `/v1/ngos/all?limit=2&cursor=${firstBody.nextCursor}`;
     const secondHeaders = signAdminRequest(adminKeypair, 'GET', secondUrl);
     const secondPage = await app.inject({ method: 'GET', url: secondUrl, headers: secondHeaders });
     expect(secondPage.statusCode).toBe(200);
@@ -624,7 +624,7 @@ describe('GET /v1/ngos/:id', () => {
       })),
     });
 
-    const response = await app.inject({ method: 'GET', url: `/ngos/${ngo.id}` });
+    const response = await app.inject({ method: 'GET', url: `/v1/ngos/${ngo.id}` });
     expect(response.statusCode).toBe(200);
 
     const body = response.json();
@@ -859,7 +859,7 @@ describe('GET /v1/ngos/:id/donors', () => {
       },
     });
 
-    const unknownCursor = '00000000-0000-0000-0000-000000000099';
+    const unknownCursor = '00000000-0000-4000-8000-000000000099';
     const response = await app.inject({
       method: 'GET',
       url: `/v1/ngos/${ngo.id}/donors?cursor=${unknownCursor}`,

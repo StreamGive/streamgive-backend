@@ -232,7 +232,7 @@ describe('GET /v1/streams', () => {
     const app = buildServer();
 
     const donor = await prisma.donor.create({ data: { address: fakeAddress('A') } });
-    const ngo = await prisma.go.create({
+    const ngo = await prisma.ngo.create({
       data: { ownerAddress: fakeAddress('B'), name: 'NGO', verified: true },
     });
     const otherNgo = await prisma.ngo.create({
@@ -324,10 +324,10 @@ describe('GET /v1/streams', () => {
     const app = buildServer();
 
     const donor = await prisma.donor.create({ data: { address: fakeAddress('A') } });
-    const ngo = await prisma.go.create({
+    const ngo = await prisma.ngo.create({
       data: { ownerAddress: fakeAddress('B'), name: 'Target NGO', verified: true },
     });
-    const otherNgo = await prisma.go.create({
+    const otherNgo = await prisma.ngo.create({
       data: { ownerAddress: fakeAddress('C'), name: 'Other NGO', verified: true },
     });
 
@@ -371,7 +371,7 @@ describe('GET /v1/streams', () => {
     const app = buildServer();
 
     const donor = await prisma.donor.create({ data: { address: fakeAddress('A') } });
-    const ngo = await prisma.go.create({
+    const ngo = await prisma.ngo.create({
       data: { ownerAddress: fakeAddress('B'), name: 'NGO', verified: true },
     });
 
@@ -546,7 +546,7 @@ describe('GET /v1/streams/:id', () => {
       },
     });
 
-    const response = await app.inject({ method: 'GET', url: `/streams/${stream.id}` });
+    const response = await app.inject({ method: 'GET', url: `/v1/streams/${stream.id}` });
     expect(response.statusCode).toBe(200);
 
     const body = response.json();
@@ -574,7 +574,7 @@ describe('GET /v1/streams/:id', () => {
       },
     });
 
-    const response = await app.inject({ method: 'GET', url: `/streams/${stream.id}` });
+    const response = await app.inject({ method: 'GET', url: `/v1/streams/${stream.id}` });
     expect(response.statusCode).toBe(200);
 
     const body = response.json();
@@ -609,7 +609,7 @@ describe('GET /v1/streams/:id', () => {
 
     const donor = await prisma.donor.create({ data: { address: fakeAddress('A') } });
     // Placeholder NGO: name is empty, not yet registered on-chain.
-    const ngo = await prisma.go.create({
+    const ngo = await prisma.ngo.create({
       data: { ownerAddress: fakeAddress('B'), name: '', verified: false },
     });
     const stream = await prisma.stream.create({
@@ -662,13 +662,13 @@ describe('GET /v1/streams/:id/activity', () => {
     });
 
     // Created oldest first so the response order is CANCELLED -> WITHDRAWAL -> TOP_UP.
-    for (const type of ['TOP_UP', 'WITHDRAWAL', 'CANCELLED'] as const) {
+    for (const type of ['created', 'withdraw', 'cancel'] as const) {
       await prisma.streamEvent.create({
         data: {
           streamId: stream.onChainId,
           type,
           ledger: 100,
-          txHash: 'aabbcc',
+          txHash: 'a'.repeat(64),
           payload: {},
         },
       });
@@ -683,9 +683,9 @@ describe('GET /v1/streams/:id/activity', () => {
     const body = response.json();
     expect(body.events).toHaveLength(3);
     expect(body.events.map((e: { type: string }) => e.type)).toEqual([
-      'CANCELLED',
-      'WITHDRAWAL',
-      'TOP_UP',
+      'cancel',
+      'withdraw',
+      'created',
     ]);
     expect(body.hasMore).toBe(false);
     expect(body.nextCursor).toBeNull();
@@ -749,13 +749,13 @@ describe('GET /v1/streams/:id/activity', () => {
     });
 
     // Created oldest first so newest-first order is CANCELLED, WITHDRAWAL, TOP_UP.
-    for (const type of ['TOP_UP', 'WITHDRAWAL', 'CANCELLED'] as const) {
+    for (const type of ['created', 'withdraw', 'cancel'] as const) {
       await prisma.streamEvent.create({
         data: {
           streamId: stream.onChainId,
           type,
           ledger: 100,
-          txHash: 'aabbcc',
+          txHash: 'a'.repeat(64),
           payload: {},
         },
       });
@@ -771,8 +771,8 @@ describe('GET /v1/streams/:id/activity', () => {
     expect(firstBody.events).toHaveLength(2);
     expect(firstBody.hasMore).toBe(true);
     expect(firstBody.events.map((e: { type: string }) => e.type)).toEqual([
-      'CANCELLED',
-      'WITHDRAWAL',
+      'cancel',
+      'withdraw',
     ]);
     // nextCursor must be the id of the last event on this page.
     expect(firstBody.nextCursor).toBe(firstBody.events[1].id);
@@ -785,7 +785,7 @@ describe('GET /v1/streams/:id/activity', () => {
     expect(secondPage.statusCode).toBe(200);
     const secondBody = secondPage.json();
     expect(secondBody.events).toHaveLength(1);
-    expect(secondBody.events[0].type).toBe('TOP_UP');
+    expect(secondBody.events[0].type).toBe('created');
     expect(secondBody.hasMore).toBe(false);
     expect(secondBody.nextCursor).toBeNull();
 
