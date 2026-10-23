@@ -179,6 +179,42 @@ describe('notify', () => {
     );
   });
 
+  it('fans an event out only to enabled endpoints subscribed to its type', async () => {
+    await prisma.notificationEndpoint.createMany({
+      data: [
+        {
+          url: 'https://one.example/webhook',
+          secret: 'one-secret',
+          eventTypes: ['stream_created'],
+        },
+        {
+          url: 'https://two.example/webhook',
+          secret: 'two-secret',
+          eventTypes: ['ngo_approved'],
+        },
+        {
+          url: 'https://disabled.example/webhook',
+          secret: 'unused-secret',
+          eventTypes: ['stream_created'],
+          enabled: false,
+        },
+      ],
+    });
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(okResponse());
+
+    await notify({ ...event, eventId: 'fanout-event-1' });
+
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(fetchSpy).toHaveBeenCalledWith(
+      'https://one.example/webhook',
+      expect.objectContaining({ method: 'POST', body: JSON.stringify({ ...event, eventId: 'fanout-event-1' }) }),
+    );
+    const log = await prisma.notificationLog.findFirst({
+      where: { eventId: 'fanout-event-1', channel: { startsWith: 'webhook:' }, success: true },
+    });
+    expect(log).not.toBeNull();
+  });
+
   it('picks up a rotated NOTIFY_WEBHOOK_URL on the next call', async () => {
     process.env.NOTIFY_WEBHOOK_URL = 'http://example.com/first';
 

@@ -21,6 +21,18 @@ export function _resetDeliveredEventIdsForTest(): void {
 const SIGNATURE_HEADER = 'x-streamgive-signature';
 const DEFAULT_WEBHOOK_TIMEOUT_MS = 3_000;
 
+type WebhookTarget = { url: string; secret?: string; channel: string };
+type WebhookResult = { success: boolean; recordNoop: boolean };
+
+function webhookLocation(target: WebhookTarget): string {
+  if (target.channel === 'webhook') return target.url;
+  try {
+    return new URL(target.url).origin;
+  } catch {
+    return '[invalid-url]';
+  }
+}
+
 function getWebhookTimeoutMs(): number {
   const configured = Number(process.env.NOTIFY_WEBHOOK_TIMEOUT_MS);
   return Number.isSafeInteger(configured) && configured > 0
@@ -28,15 +40,22 @@ function getWebhookTimeoutMs(): number {
     : DEFAULT_WEBHOOK_TIMEOUT_MS;
 }
 
-/** Real (if NOTIFY_WEBHOOK_URL is set): POSTs the event as JSON. Node's
- * built-in fetch means this needs no extra dependency. */
-async function notifyWebhook(event: NotificationEvent): Promise<boolean> {
-  // Deliberately read per call rather than captured at module load: hoisting
-  // this to a module-level constant freezes the URL at import time, so a
-  // value set (or rotated) later in the process lifetime would be ignored
-  // until a restart. test/notifications/service.test.ts guards this.
-  const webhookUrl = process.env.NOTIFY_WEBHOOK_URL;
-  if (!webhookUrl) return true;
+/** Posts one event to a configured destination. */
+async function notifyWebhookTarget(
+  event: NotificationEvent,
+  target: WebhookTarget,
+): Promise<boolean> {
+  if (event.eventId) {
+    try {
+      const delivered = await prisma.notificationLog.findFirst({
+        where: { eventId: event.eventId, channel: target.channel, success: true },
+      });
+      if (delivered) return true;
+    } catch (error) {
+      console.error('failed to check persisted endpoint delivery', error);
+      return false;
+    }
+  }
 
   // Serialised once and reused as both the signed input and the request
   // body. Signing a second `JSON.stringify(event)` would work today but
@@ -49,7 +68,7 @@ async function notifyWebhook(event: NotificationEvent): Promise<boolean> {
 
   // Read per call rather than at module load so deployments can rotate the
   // secret without a restart, and so tests can set it per case.
-  const secret = process.env.NOTIFY_WEBHOOK_SECRET;
+  const secret = target.secret;
   if (secret) {
     headers[SIGNATURE_HEADER] = createHmac('sha256', secret).update(body).digest('hex');
   }
@@ -58,7 +77,7 @@ async function notifyWebhook(event: NotificationEvent): Promise<boolean> {
   let error: string | undefined;
 
   try {
-    const res = await fetch(webhookUrl, {
+    const res = await fetch(target.url, {
       method: 'POST',
       headers,
       body,
@@ -69,30 +88,76 @@ async function notifyWebhook(event: NotificationEvent): Promise<boolean> {
       success = true;
     } else {
       error = `status ${res.status}`;
-      console.error(`webhook notification failed with status ${res.status} for ${webhookUrl}`);
+      console.error(
+        `webhook notification failed with status ${res.status} for ${webhookLocation(target)}`,
+      );
     }
   } catch (err) {
-    error = err instanceof Error ? err.message : String(err);
-    console.error('webhook notification failed', err);
+    error = err instanceof Error ? err.name : 'unknown_error';
+    console.error('webhook notification failed');
   }
 
   recordNotificationDelivery(success ? 'success' : 'failure');
 
   try {
-    await prisma.notificationLog.create({
-      data: {
-        eventId: success ? event.eventId : null,
-        eventType: event.type,
-        channel: 'webhook',
-        success,
-        error,
-      },
-    });
+    const data = {
+      eventId: event.eventId ?? null,
+      eventType: event.type,
+      channel: target.channel,
+      success,
+      error,
+    };
+    if (event.eventId) {
+      await prisma.notificationLog.upsert({
+        where: { eventId_channel: { eventId: event.eventId, channel: target.channel } },
+        create: data,
+        update: { success, error },
+      });
+    } else {
+      await prisma.notificationLog.create({ data });
+    }
   } catch (err) {
     console.error('failed to write notification log', err);
   }
 
   return success;
+}
+
+/** Delivers to every enabled endpoint subscribed to the event. */
+async function notifyWebhook(event: NotificationEvent): Promise<WebhookResult> {
+  let endpoints: Awaited<ReturnType<typeof prisma.notificationEndpoint.findMany>>;
+  try {
+    endpoints = await prisma.notificationEndpoint.findMany({ where: { enabled: true } });
+  } catch (error) {
+    console.error('failed to load webhook endpoints', error);
+    return { success: false, recordNoop: false };
+  }
+
+  const configured = endpoints.length > 0;
+  const targets: WebhookTarget[] = endpoints
+    .filter((endpoint) => endpoint.eventTypes.includes(event.type))
+    .map((endpoint) => ({
+      url: endpoint.url,
+      secret: endpoint.secret,
+      channel: `webhook:${endpoint.id}`,
+    }));
+
+  // Keep the original single-endpoint environment configuration working for
+  // existing deployments until they migrate destinations into the table.
+  if (!configured && process.env.NOTIFY_WEBHOOK_URL) {
+    targets.push({
+      url: process.env.NOTIFY_WEBHOOK_URL,
+      secret: process.env.NOTIFY_WEBHOOK_SECRET,
+      channel: 'webhook',
+    });
+  }
+
+  if (targets.length === 0) {
+    return { success: true, recordNoop: !configured };
+  }
+
+  const results = await Promise.all(targets.map((target) => notifyWebhookTarget(event, target)));
+  return { success: results.every(Boolean), recordNoop: false };
 }
 
 /** Stub: no email provider wired up yet — picking one (SendGrid, Postmark,
@@ -118,31 +183,19 @@ async function notifyEmail(event: NotificationEvent): Promise<void> {
 export async function notify(event: NotificationEvent): Promise<void> {
   if (event.eventId) {
     if (deliveredEventIds.has(event.eventId)) return;
-
-    try {
-      const persisted = await prisma.notificationLog.findFirst({
-        where: { eventId: event.eventId, success: true },
-      });
-      if (persisted) {
-        deliveredEventIds.add(event.eventId);
-        return;
-      }
-    } catch (err) {
-      console.error('failed to check persisted notification delivery', err);
-    }
   }
 
-  const [webhookSuccess] = await Promise.all([notifyWebhook(event), notifyEmail(event)]);
+  const [webhookResult] = await Promise.all([notifyWebhook(event), notifyEmail(event)]);
 
   // Mark delivered only after successful delivery
-  if (event.eventId && webhookSuccess) {
+  if (event.eventId && webhookResult.success) {
     deliveredEventIds.add(event.eventId);
     if (deliveredEventIds.size > MAX_DELIVERED_EVENT_IDS) {
       const oldest = deliveredEventIds.values().next().value;
       if (oldest) deliveredEventIds.delete(oldest);
     }
 
-    if (!process.env.NOTIFY_WEBHOOK_URL) {
+    if (webhookResult.recordNoop) {
       try {
         await prisma.notificationLog.create({
           data: {
