@@ -320,15 +320,12 @@ export function buildServer(options?: BuildServerOptions) {
   );
 
   /**
-   * Liveness probe — only checks the database so that an RPC outage does not
-   * cause the platform to restart a healthy API process.  The check is
-   * time-boxed so a slow database is reported as degraded rather than
-   * hanging the probe indefinitely.
+   * Liveness probe — checks the database is reachable and returns the minimal
+   * contract Render and uptime pingers expect: a plain 200 with a status flag.
    *
    * @route GET /health
    * @auth Public
-   * @returns 200 `{ status: "ok", db: "ok" }` or
-   *          503 `{ status: "error", db: "error" }`.
+   * @returns 200 `{ status: "ok" }`; 503 on DB failure.
    */
   const healthHandler = async (_req: unknown, reply: FastifyReply) => {
     const dbResult = await Promise.allSettled([
