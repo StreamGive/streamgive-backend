@@ -312,6 +312,23 @@ describe('GET /v1/donors/:address', () => {
   });
 });
 
+const CSV_HEADERS = [
+  'id',
+  'onChainId',
+  'ngoId',
+  'ngoName',
+  'ngoAddress',
+  'tokenAddress',
+  'rate',
+  'lastRate',
+  'balance',
+  'withdrawn',
+  'status',
+  'createdTxHash',
+  'createdAt',
+  'updatedAt',
+];
+
 describe('GET /v1/donors/:address/streams.csv', () => {
   afterEach(async () => {
     await resetDb();
@@ -336,6 +353,76 @@ describe('GET /v1/donors/:address/streams.csv', () => {
     expect(body).toBe(
       'id,onChainId,ngoId,ngoName,ngoAddress,tokenAddress,rate,lastRate,balance,withdrawn,status,createdTxHash,createdAt,updatedAt',
     );
+
+    await app.close();
+  });
+
+  it('pins the exact body, content type and filename for a donor with no streams', async () => {
+    const app = buildServer();
+    const donor = await prisma.donor.create({ data: { address: fakeAddress('D') } });
+
+    const response = await app.inject({
+      method: 'GET',
+      url: `/v1/donors/${donor.address}/streams.csv`,
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.headers['content-type']).toBe('text/csv; charset=utf-8');
+    expect(response.headers['content-disposition']).toBe(
+      `attachment; filename="donor-${donor.address}-streams.csv"`,
+    );
+    // Header row only, terminated by CRLF, with no extra rows or trailing whitespace.
+    expect(response.body).toBe(`${CSV_HEADERS.join(',')}\r\n`);
+
+    await app.close();
+  });
+
+  it('writes the header row and each data row in the pinned column order', async () => {
+    const app = buildServer();
+    const donor = await prisma.donor.create({ data: { address: fakeAddress('E') } });
+    const ngo = await prisma.ngo.create({
+      data: { ownerAddress: fakeAddress('N'), name: 'Plain NGO', verified: true },
+    });
+    const stream = await prisma.stream.create({
+      data: {
+        onChainId: 7n,
+        donorId: donor.id,
+        ngoId: ngo.id,
+        tokenAddress: fakeAddress('T'),
+        rate: '10',
+        lastRate: '5',
+        balance: '500',
+        withdrawn: '100',
+        status: 'ACTIVE',
+        createdTxHash: 'abc123',
+      },
+    });
+
+    const response = await app.inject({
+      method: 'GET',
+      url: `/v1/donors/${donor.address}/streams.csv`,
+    });
+
+    expect(response.statusCode).toBe(200);
+    const [headerLine, rowLine, ...rest] = response.body.split('\r\n');
+    expect(headerLine.split(',')).toEqual(CSV_HEADERS);
+    expect(rest).toEqual(['']);
+    expect(rowLine.split(',')).toEqual([
+      stream.id,
+      '7',
+      ngo.id,
+      'Plain NGO',
+      fakeAddress('N'),
+      fakeAddress('T'),
+      '10',
+      '5',
+      '500',
+      '100',
+      'ACTIVE',
+      'abc123',
+      stream.createdAt.toISOString(),
+      stream.updatedAt.toISOString(),
+    ]);
 
     await app.close();
   });
