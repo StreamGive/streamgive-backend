@@ -217,6 +217,28 @@ describe('notify', () => {
     expect(log).not.toBeNull();
   });
 
+  it('delivers only to endpoints whose eventTypes include the event type', async () => {
+    await prisma.notificationEndpoint.createMany({
+      data: [
+        { url: 'https://8.8.8.8/empty', secret: 'empty-secret', eventTypes: [] },
+        { url: 'https://8.8.4.4/match', secret: 'match-secret', eventTypes: ['stream_created'] },
+        { url: 'https://1.1.1.1/other', secret: 'other-secret', eventTypes: ['ngo_approved'] },
+      ],
+    });
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(okResponse());
+
+    await notify({ ...event, eventId: 'filter-event-1' });
+
+    // An empty list is not a wildcard: it matches no event type.
+    const urls = fetchSpy.mock.calls.map(([url]) => url);
+    expect(urls).toEqual(['https://8.8.4.4/match']);
+
+    const channels = await prisma.notificationLog.findMany({
+      where: { eventId: 'filter-event-1', channel: { startsWith: 'webhook:' } },
+    });
+    expect(channels).toHaveLength(1);
+  });
+
   it('picks up a rotated NOTIFY_WEBHOOK_URL on the next call', async () => {
     process.env.NOTIFY_WEBHOOK_URL = 'http://example.com/first';
 
