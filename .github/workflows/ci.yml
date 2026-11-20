@@ -44,6 +44,11 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
+      - name: Build
+        run: |
+          npm run build
+          test -f dist/index.js
+
       - name: Sync test database schema
         # db push, not migrate deploy: no migration files exist yet (no
         # local Postgres has been available to generate them from), and
