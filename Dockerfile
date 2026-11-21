@@ -1,5 +1,5 @@
 # ---- build: compile TS (and the generated Prisma client) to dist/ ----
-FROM node:22-slim AS build
+FROM node:26-slim AS build
 WORKDIR /app
 
 # Copied separately from the rest of the source so `npm ci` — and its
@@ -14,7 +14,7 @@ COPY . .
 RUN npm run build
 
 # ---- runtime: production deps only, non-root, no build tooling ----
-FROM node:22-slim AS runtime
+FROM node:26-slim AS runtime
 WORKDIR /app
 ARG GIT_COMMIT=unknown
 ARG BUILD_TIME=
